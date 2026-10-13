@@ -1,0 +1,2088 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Oracle: Testimonio vs Alucinación | Escape Room Epistemológico 3D RTX</title>
+    
+    <!-- Librerías Externas vía CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    
+    <!-- Three.js Postprocessing para Gráficos RTX (Bloom & HDR Glow) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <!-- Pipeline RTX y los 6 Niveles Modulares en Archivos Separados -->
+    <script src="js/rtxPostprocessing.js"></script>
+    <script src="levels/level1_backrooms.js"></script>
+    <script src="levels/level2_fnaf.js"></script>
+    <script src="levels/level3_blackbox.js"></script>
+    <script src="levels/level4_stochastic_parrots.js"></script>
+    <script src="levels/level5_model_collapse.js"></script>
+    <script src="levels/level6_testimonial_justice.js"></script>
+    <script src="levels/levelManager.js"></script>
+
+    <!-- Tipografías Cyberpunk y Académicas -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --neon-cyan: #00f3ff;
+            --neon-magenta: #ff0077;
+            --neon-yellow: #ffb703;
+            --neon-green: #00ff66;
+            --fnaf-red: #ff2222;
+            --cyber-dark: #070913;
+            --hud-bg: rgba(8, 12, 24, 0.85);
+            --hud-border: rgba(0, 243, 255, 0.45);
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000000;
+            font-family: 'Rajdhani', sans-serif;
+            color: #ffffff;
+        }
+
+        h1, h2, h3, .font-orbitron {
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        .font-mono-tech {
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .interactive {
+            pointer-events: auto;
+        }
+
+        .glass-panel {
+            background: var(--hud-bg);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid var(--hud-border);
+            box-shadow: 0 0 30px rgba(0, 243, 255, 0.2), inset 0 0 15px rgba(0, 243, 255, 0.08);
+            border-radius: 12px;
+            position: relative;
+        }
+
+        .glass-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 10px;
+            height: 10px;
+            border-top: 2px solid var(--neon-cyan);
+            border-left: 2px solid var(--neon-cyan);
+        }
+
+        .glass-panel::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 10px;
+            height: 10px;
+            border-bottom: 2px solid var(--neon-cyan);
+            border-right: 2px solid var(--neon-cyan);
+        }
+
+        .btn-neon-cyan {
+            background: rgba(0, 243, 255, 0.15);
+            color: var(--neon-cyan);
+            border: 1.5px solid var(--neon-cyan);
+            box-shadow: 0 0 16px rgba(0, 243, 255, 0.4);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+        .btn-neon-cyan:hover {
+            background: var(--neon-cyan);
+            color: #000000;
+            box-shadow: 0 0 32px rgba(0, 243, 255, 0.95);
+            transform: translateY(-2px);
+        }
+
+        .btn-neon-magenta {
+            background: rgba(255, 0, 119, 0.15);
+            color: var(--neon-magenta);
+            border: 1.5px solid var(--neon-magenta);
+            box-shadow: 0 0 16px rgba(255, 0, 119, 0.4);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+        .btn-neon-magenta:hover {
+            background: var(--neon-magenta);
+            color: #ffffff;
+            box-shadow: 0 0 32px rgba(255, 0, 119, 0.95);
+            transform: translateY(-2px);
+        }
+
+        .scanlines {
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%, 
+                rgba(0, 0, 0, 0.22) 50%
+            ), linear-gradient(
+                90deg,
+                rgba(255, 0, 0, 0.02),
+                rgba(0, 255, 0, 0.01),
+                rgba(0, 255, 0, 0.02)
+            );
+            background-size: 100% 3px, 6px 100%;
+            pointer-events: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            opacity: 0.45;
+        }
+
+        #chase-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, rgba(255,0,0,0) 25%, rgba(255, 0, 50, 0.75) 100%);
+            pointer-events: none;
+            z-index: 4;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        .chase-active {
+            opacity: 1 !important;
+            animation: pulse-danger 0.65s infinite alternate ease-in-out;
+        }
+        @keyframes pulse-danger {
+            0% { opacity: 0.35; transform: scale(1); }
+            100% { opacity: 0.95; transform: scale(1.02); }
+        }
+
+        #flash-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #ffffff;
+            pointer-events: none;
+            z-index: 6;
+            opacity: 0;
+            transition: opacity 0.15s ease-out;
+        }
+
+        /* Retícula: OCULTA por defecto en 3ra persona para que no tape al personaje */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 24px;
+            height: 24px;
+            pointer-events: none;
+            z-index: 20;
+            display: none; /* Se activa exclusivamente en primera persona */
+        }
+        .ch-bracket {
+            position: absolute;
+            width: 7px;
+            height: 7px;
+            border-color: var(--neon-cyan);
+        }
+        .ch-tl { top: 0; left: 0; border-top: 2px solid; border-left: 2px solid; }
+        .ch-tr { top: 0; right: 0; border-top: 2px solid; border-right: 2px solid; }
+        .ch-bl { bottom: 0; left: 0; border-bottom: 2px solid; border-left: 2px solid; }
+        .ch-br { bottom: 0; right: 0; border-bottom: 2px solid; border-right: 2px solid; }
+        .ch-dot { top: 10px; left: 10px; width: 4px; height: 4px; border-radius: 50%; background: #ffffff; position: absolute; }
+
+        #hud-notification {
+            position: absolute;
+            top: 24%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.25rem;
+            color: #ffffff;
+            text-shadow: 0 0 15px rgba(255, 0, 119, 0.9);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+            pointer-events: none;
+            z-index: 30;
+            text-align: center;
+            background: rgba(10, 5, 20, 0.94);
+            padding: 12px 28px;
+            border-radius: 8px;
+            border: 1px solid var(--neon-magenta);
+            box-shadow: 0 0 25px rgba(255, 0, 119, 0.5);
+        }
+
+        #compass-bar {
+            width: 300px;
+            height: 28px;
+            background: rgba(5, 10, 20, 0.8);
+            border: 1.5px solid rgba(0, 243, 255, 0.4);
+            border-radius: 14px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #compass-needle {
+            position: absolute;
+            height: 100%;
+            width: 2px;
+            background: var(--neon-cyan);
+            box-shadow: 0 0 8px var(--neon-cyan);
+        }
+        .radar-blip {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            top: 9px;
+            transform: translateX(-50%);
+            transition: left 0.05s linear;
+        }
+
+        .stamina-meter {
+            height: 8px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+            overflow: hidden;
+            width: 140px;
+        }
+        .stamina-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00f3ff, #00ff66);
+            width: 100%;
+            transition: width 0.08s linear;
+        }
+
+        .inventory-slot {
+            width: 62px;
+            height: 62px;
+            background: rgba(10, 18, 36, 0.9);
+            border: 2px solid rgba(0, 243, 255, 0.4);
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            pointer-events: auto;
+        }
+        .inventory-slot:hover {
+            border-color: var(--neon-cyan);
+            box-shadow: 0 0 18px rgba(0, 243, 255, 0.6);
+            transform: translateY(-3px);
+        }
+        .inventory-slot.active-shield {
+            border-color: #00ff66;
+            box-shadow: 0 0 20px rgba(0, 255, 102, 0.7);
+        }
+        .inventory-slot .slot-key {
+            position: absolute;
+            top: 2px;
+            left: 5px;
+            font-size: 11px;
+            font-family: 'Share Tech Mono', monospace;
+            color: #88ffff;
+            font-weight: bold;
+        }
+        .inventory-slot .slot-count {
+            position: absolute;
+            bottom: 2px;
+            right: 5px;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Orbitron', sans-serif;
+            color: #ffff00;
+        }
+
+        /* Botón Táctil de Refugio FNAF */
+        #btn-security-action {
+            display: none;
+            position: absolute;
+            bottom: 120px;
+            right: 25px;
+            z-index: 30;
+            background: #ff1122;
+            color: white;
+            border: 2px solid #ffffff;
+            box-shadow: 0 0 30px #ff0000;
+            border-radius: 12px;
+            padding: 14px 26px;
+            font-family: 'Orbitron';
+            font-weight: 900;
+            cursor: pointer;
+            pointer-events: auto;
+            animation: pulse-danger 0.7s infinite alternate;
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.4); }
+        ::-webkit-scrollbar-thumb { background: rgba(0, 243, 255, 0.4); border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container" class="interactive"></div>
+    <div class="scanlines"></div>
+    <div id="chase-overlay"></div>
+    <div id="flash-overlay"></div>
+
+    <!-- Retícula (Crosshair) -->
+    <div id="crosshair">
+        <div class="ch-bracket ch-tl"></div>
+        <div class="ch-bracket ch-tr"></div>
+        <div class="ch-bracket ch-bl"></div>
+        <div class="ch-bracket ch-br"></div>
+        <div class="ch-dot"></div>
+    </div>
+
+    <div id="hud-notification">ALERTA DEL SISTEMA</div>
+
+    <!-- Botón de Emergencia para la Puerta de Seguridad en FNAF -->
+    <button id="btn-security-action" onclick="triggerSecurityDoor()">
+        🚨 ¡CERRAR PUERTA BLINDADA! [TECLA E]
+    </button>
+
+    <!-- Capa de Interfaz de Usuario (HUD / Menús) -->
+    <div id="ui-layer" class="p-3 sm:p-5">
+
+        <!-- ==================== PANTALLA PRINCIPAL: MENÚ ==================== -->
+        <div id="screen-menu" class="interactive flex flex-col items-center justify-center w-full h-full bg-black/85 z-40">
+            <div class="w-full max-w-4xl text-center space-y-5 px-4 overflow-y-auto max-h-[95vh]">
+                
+                <div class="relative inline-block">
+                    <span class="text-xs sm:text-sm font-mono-tech tracking-widest text-cyan-400 uppercase bg-cyan-950/70 px-3 py-1 rounded border border-cyan-800">
+                        ESCAPE ROOM EPISTEMOLÓGICO 3D // 6 NIVELES COMPLETOS
+                    </span>
+                    <h1 class="text-4xl sm:text-7xl font-orbitron font-black tracking-widest text-cyan-400 mt-2" style="text-shadow: 0 0 30px #00f3ff, 0 0 60px rgba(0,243,255,0.4);">
+                        NEON ORACLE
+                    </h1>
+                    <h2 class="text-base sm:text-xl text-pink-500 font-semibold tracking-wider uppercase font-orbitron mt-1" style="text-shadow: 0 0 15px rgba(255,0,119,0.7);">
+                        Testimonio vs Alucinación | Habitación China, FNAF, Caja Negra y Más
+                    </h2>
+                </div>
+
+                <!-- Panel de Misión -->
+                <div class="glass-panel p-5 sm:p-6 text-left space-y-4">
+                    <div class="flex items-center space-x-2 text-cyan-300 font-orbitron text-sm sm:text-base border-b border-cyan-500/30 pb-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                        <span>GUÍA DE NIVELES Y DINÁMICA DE JUEGO</span>
+                    </div>
+                    
+                    <p class="text-gray-300 text-xs sm:text-sm leading-relaxed">
+                        Examina el enunciado generado por la IA en el HUD. Explora el entorno en 360° y cruza físicamente la puerta colosal: <strong class="text-cyan-400">VERDAD</strong> o <strong class="text-pink-400">ALUCINACIÓN</strong>.
+                    </p>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs font-mono-tech">
+                        <div class="bg-yellow-950/40 p-2.5 rounded border border-yellow-700/60">
+                            <span class="text-yellow-400 font-bold block mb-1">🟨 N1: THE BACKROOMS:</span>
+                            La <strong>Mona China Yandere</strong> te persigue susurrando <em>«Six seven»</em> si fallas.
+                        </div>
+                        <div class="bg-red-950/40 p-2.5 rounded border border-red-700/60">
+                            <span class="text-red-400 font-bold block mb-1">🐻 N2: PIZZERÍA FNAF:</span>
+                            Los animatrónicos acechan. <strong>¡Corre a la Sala de Seguridad y cierra la puerta blindada con [E]!</strong>
+                        </div>
+                        <div class="bg-purple-950/40 p-2.5 rounded border border-purple-700/60">
+                            <span class="text-purple-400 font-bold block mb-1">⬛ N3: LA CAJA NEGRA:</span>
+                            Entidad <strong>Weeping Angel</strong>: se congela si la miras y ataca si le das la espalda.
+                        </div>
+                        <div class="bg-emerald-950/40 p-2.5 rounded border border-emerald-700/60">
+                            <span class="text-emerald-400 font-bold block mb-1">🦜 N4: LOROS ESTOCÁSTICOS:</span>
+                            Vórtice de datos de Bender & Gebru: la ilusión de intencionalidad sin modelo de mundo.
+                        </div>
+                        <div class="bg-rose-950/40 p-2.5 rounded border border-rose-700/60">
+                            <span class="text-rose-400 font-bold block mb-1">🌀 N5: COLAPSO DEL MODELO:</span>
+                            Dimensión Glitch entrópica de Shumailov et al.: degeneración por datos sintéticos.
+                        </div>
+                        <div class="bg-blue-950/40 p-2.5 rounded border border-blue-700/60">
+                            <span class="text-blue-400 font-bold block mb-1">⚖️ N6: TRIBUNAL ALGORÍTMICO:</span>
+                            Injusticia testimonial hermenéutica de Miranda Fricker en decisiones automáticas.
+                        </div>
+                    </div>
+
+                    <div class="bg-cyan-950/30 p-3 rounded border border-cyan-500/40 text-xs text-cyan-200">
+                        <span class="font-orbitron font-bold text-white block mb-1">🎮 CONTROLES:</span>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono-tech">
+                            <span><kbd class="bg-black px-1.5 py-0.5 rounded border border-cyan-700">W, A, S, D</kbd> Moverse</span>
+                            <span><kbd class="bg-black px-1.5 py-0.5 rounded border border-cyan-700">SHIFT</kbd> Correr 2X</span>
+                            <span><kbd class="bg-black px-1.5 py-0.5 rounded border border-cyan-700">ESPACIO</kbd> Saltar</span>
+                            <span><kbd class="bg-black px-1.5 py-0.5 rounded border border-cyan-700">RUEDA RATÓN</kbd> Zoom Cámara</span>
+                        </div>
+                        <div class="mt-2 text-yellow-300 font-mono-tech">
+                            🎒 <strong>DEFENSA:</strong> <kbd class="bg-black px-1 rounded border border-yellow-600">E</kbd> EMP / Cerrar Puerta | <kbd class="bg-black px-1 rounded border border-yellow-600">Q</kbd> Flashbang | <kbd class="bg-black px-1 rounded border border-yellow-600">F</kbd> Señuelo Fazbear | <kbd class="bg-black px-1 rounded border border-yellow-600">R</kbd> Escudo | <kbd class="bg-black px-1 rounded border border-yellow-600">V</kbd> Alternar Cámara
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-4 justify-center items-center pt-1">
+                    <button onclick="startGame()" class="btn-neon-cyan px-8 py-3.5 rounded font-bold text-lg font-orbitron w-full sm:w-auto min-w-[220px]">
+                        INICIAR ESCAPE (JUGAR)
+                    </button>
+                    <button onclick="openBlackBoxDossier()" class="btn-neon-magenta px-8 py-3.5 rounded font-bold text-lg font-orbitron w-full sm:w-auto min-w-[220px]">
+                        LA CAJA NEGRA (DOSSIER)
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ==================== PANTALLA DE JUEGO (HUD ACTIVO) ==================== -->
+        <div id="screen-game" class="hidden flex-col w-full h-full relative pointer-events-none justify-between">
+            
+            <div class="w-full max-w-5xl mx-auto z-10 pointer-events-none">
+                <div class="glass-panel p-3 sm:p-4 shadow-2xl border-t-4 border-cyan-400">
+                    
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-2 pb-2 border-b border-gray-800 text-xs">
+                        <div class="flex items-center space-x-2">
+                            <span id="progress-display" class="font-orbitron font-bold text-cyan-400 bg-cyan-950/70 px-2 py-0.5 rounded border border-cyan-700">
+                                NODO 1 / 6
+                            </span>
+                            <span id="room-name" class="font-orbitron font-semibold text-yellow-400 tracking-wider">
+                                THE BACKROOMS (HABITACIÓN CHINA)
+                            </span>
+                        </div>
+
+                        <!-- Brújula / Radar Táctico -->
+                        <div class="hidden sm:flex flex-col items-center">
+                            <div id="compass-bar">
+                                <div id="compass-needle"></div>
+                                <div id="blip-truth" class="radar-blip bg-cyan-400 shadow-[0_0_8px_#00f3ff]" title="Puerta Verdad"></div>
+                                <div id="blip-hallucination" class="radar-blip bg-pink-500 shadow-[0_0_8px_#ff0077]" title="Puerta Alucinación"></div>
+                                <div id="blip-security" class="radar-blip bg-red-500 shadow-[0_0_10px_#ff0000] hidden" title="Sala de Seguridad FNAF"></div>
+                                <div id="blip-chaser" class="radar-blip bg-red-600 shadow-[0_0_10px_#ff0000] hidden" title="Amenaza"></div>
+                            </div>
+                            <span class="text-[9px] font-mono-tech text-gray-400 mt-0.5">RADAR DE PUERTAS Y OBJETIVOS</span>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <span class="text-gray-400 font-mono-tech">TIEMPO:</span>
+                            <span id="time-display" class="font-orbitron font-black text-base text-yellow-400 bg-black/70 px-2.5 py-0.5 rounded border border-yellow-700">
+                                05:00
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Enunciado de la IA -->
+                    <div class="bg-black/85 rounded-lg p-3 border border-cyan-900/80 shadow-inner relative overflow-hidden pointer-events-auto">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-[10px] font-mono-tech text-cyan-400 flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-full bg-cyan-400 inline-block animate-ping"></span>
+                                DECLARACIÓN GENERATIVA (AUDITORÍA EPISTÉMICA):
+                            </span>
+                            <span id="distance-display" class="text-[11px] font-mono-tech text-yellow-400">
+                                PUERTA: -- m
+                            </span>
+                        </div>
+                        <p id="statement-text" class="text-sm sm:text-xl font-bold text-white leading-snug font-orbitron text-center sm:text-left py-0.5 text-cyan-100">
+                            "Cargando proposición..."
+                        </p>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-2 mt-2 pt-1 border-t border-gray-800/80 text-xs">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[11px] font-mono-tech text-emerald-400 font-bold" id="score-display">
+                                DATOS: 0 / 30
+                            </span>
+                            <span id="objective-subtext" class="text-[10px] font-mono-tech text-cyan-300">
+                                [Explora el laberinto y cruza la puerta física correcta]
+                            </span>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] font-mono-tech text-cyan-400 font-bold">SHIFT (CORRER 2X):</span>
+                            <div class="stamina-meter">
+                                <div id="stamina-bar" class="stamina-fill"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <div class="w-full max-w-5xl mx-auto flex justify-between items-end pb-2 z-10 pointer-events-none">
+                
+                <div class="glass-panel p-2.5 rounded-lg text-xs font-mono-tech space-y-1 hidden sm:block max-w-xs">
+                    <div class="flex items-center justify-between text-gray-300">
+                        <span>ESTADO:</span>
+                        <span id="player-status-badge" class="text-emerald-400 font-bold">EXPLORANDO</span>
+                    </div>
+                    <div id="hint-text" class="text-[10px] text-gray-400">
+                        Usa <strong class="text-cyan-300">W, A, S, D</strong>. Zoom: <strong class="text-cyan-300">Rueda Ratón</strong>. Mira: <strong class="text-cyan-300">[V] 1ra persona</strong>.
+                    </div>
+                </div>
+
+                <!-- DOCK DE INVENTARIO TÁCTICO -->
+                <div class="flex flex-col items-center pointer-events-auto">
+                    <span class="text-[10px] font-mono-tech text-yellow-400 tracking-wider mb-1 bg-black/75 px-2 py-0.5 rounded border border-yellow-800">
+                        ARSENAL DEFENSIVO (INVENTARIO)
+                    </span>
+                    <div class="flex gap-2">
+                        <div class="inventory-slot" id="slot-emp" onclick="useItem('emp')" title="Pulso EMP: Congela al enemigo 4.5s">
+                            <span class="slot-key">E</span>
+                            <span class="text-cyan-400 text-xl font-bold font-orbitron">⚡</span>
+                            <span class="text-[9px] font-mono-tech text-gray-300">EMP</span>
+                            <span class="slot-count" id="count-emp">x1</span>
+                        </div>
+
+                        <div class="inventory-slot" id="slot-flash" onclick="useItem('flash')" title="Stun Flash: Ciega y aturde al atacante 5s">
+                            <span class="slot-key">Q</span>
+                            <span class="text-pink-400 text-xl font-bold font-orbitron">💥</span>
+                            <span class="text-[9px] font-mono-tech text-gray-300">FLASH</span>
+                            <span class="slot-count" id="count-flash">x0</span>
+                        </div>
+
+                        <div class="inventory-slot" id="slot-decoy" onclick="useItem('decoy')" title="Señuelo Holográfico: Distrae a animatrónicos 6s">
+                            <span class="slot-key">F</span>
+                            <span class="text-yellow-400 text-xl font-bold font-orbitron">👾</span>
+                            <span class="text-[9px] font-mono-tech text-gray-300">SEÑUELO</span>
+                            <span class="slot-count" id="count-decoy">x0</span>
+                        </div>
+
+                        <div class="inventory-slot" id="slot-shield" onclick="useItem('shield')" title="Escudo Cortafuegos: Absorbe 1 impacto sin daño">
+                            <span class="slot-key">R</span>
+                            <span class="text-emerald-400 text-xl font-bold font-orbitron">🛡️</span>
+                            <span class="text-[9px] font-mono-tech text-gray-300">ESCUDO</span>
+                            <span class="slot-count" id="count-shield">x0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pointer-events-auto flex items-center gap-2">
+                    <button onclick="toggleRTXMode()" id="btn-toggle-rtx" class="btn-neon-cyan px-3 py-2 rounded text-xs font-orbitron font-bold flex items-center gap-1.5" title="Activar/Desactivar Resplandor Neón RTX">
+                        <span>✨</span> <span id="rtx-status-label">RTX: ON</span>
+                    </button>
+                    <button onclick="toggleCameraView()" class="btn-neon-cyan px-3 py-2 rounded text-xs font-orbitron font-bold">
+                        🎥 CÁMARA [V]
+                    </button>
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- ==================== MODAL DE FEEDBACK EPISTEMOLÓGICO ==================== -->
+        <div id="modal-feedback" class="hidden interactive absolute top-0 left-0 w-full h-full bg-black/90 flex flex-col items-center justify-center z-50 p-4">
+            <div class="glass-panel p-6 sm:p-9 w-full max-w-3xl text-center border-t-4" id="feedback-panel">
+                
+                <div class="flex items-center justify-center space-x-3 mb-2">
+                    <span id="feedback-badge" class="font-mono-tech text-xs tracking-widest px-3 py-1 rounded uppercase font-bold">
+                        VERIFICACIÓN EPISTÉMICA
+                    </span>
+                </div>
+
+                <h2 id="feedback-title" class="text-2xl sm:text-4xl font-orbitron font-bold mb-3 tracking-wider">
+                    ¡EVALUACIÓN CORRECTA!
+                </h2>
+
+                <div class="bg-black/80 p-4 sm:p-6 rounded-xl mb-5 border border-gray-700/80 text-left space-y-2 shadow-inner">
+                    <div class="text-xs font-mono-tech text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                        FUNDAMENTACIÓN FILOSÓFICA Y ACADÉMICA:
+                    </div>
+                    <p id="feedback-explanation" class="text-xs sm:text-base text-gray-200 leading-relaxed font-sans">
+                    </p>
+                </div>
+
+                <div id="reward-notification-box" class="bg-emerald-950/60 border border-emerald-500/60 p-3 rounded-lg mb-5 text-emerald-300 font-mono-tech text-xs flex items-center justify-center gap-2">
+                    <span>🎁 RECOMPENSA DE AUDITORÍA:</span>
+                    <strong id="reward-item-name" class="text-white">¡NUEVO ÍTEM AÑADIDO AL INVENTARIO!</strong>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button onclick="handleModalNext()" id="btn-next-node" class="btn-neon-cyan px-8 py-3.5 rounded-lg font-bold text-base font-orbitron w-full tracking-widest">
+                        CONTINUAR AL SIGUIENTE NODO ->
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ==================== MODAL DE VICTORIA FINAL ==================== -->
+        <div id="modal-victory" class="hidden interactive absolute top-0 left-0 w-full h-full bg-black/95 flex flex-col items-center justify-center z-50 p-4">
+            <div class="glass-panel p-8 sm:p-12 w-full max-w-3xl text-center border-t-4 border-emerald-400 shadow-[0_0_50px_rgba(0,255,102,0.3)]">
+                <span class="text-emerald-400 font-mono-tech text-sm tracking-widest uppercase bg-emerald-950/70 px-4 py-1.5 rounded border border-emerald-700">
+                    SISTEMA AUDITADO CON ÉXITO
+                </span>
+                <h2 class="text-3xl sm:text-5xl font-orbitron font-black text-white mt-3 mb-2 tracking-wider" style="text-shadow: 0 0 30px #00ff66;">
+                    ¡ESCAPE EPISTEMOLÓGICO TOTAL!
+                </h2>
+                <h3 class="text-base text-emerald-300 font-semibold mb-5">
+                    Has superado los 6 Nodos Epistemológicos: Searle, FNAF, Humphreys, Bender, Shumailov y Fricker.
+                </h3>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-black/80 p-4 rounded-xl border border-emerald-900/60 mb-5 text-left font-mono-tech text-xs">
+                    <div>
+                        <span class="text-gray-400 block">TIEMPO:</span>
+                        <span id="victory-time" class="text-emerald-300 text-base font-bold font-orbitron">03:45</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400 block">DATOS:</span>
+                        <span id="victory-score" class="text-cyan-300 text-base font-bold font-orbitron">30</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400 block">ÍTEMS USADOS:</span>
+                        <span id="victory-items" class="text-yellow-300 text-base font-bold font-orbitron">2</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400 block">RANGO:</span>
+                        <span class="text-purple-400 text-base font-bold font-orbitron">FILÓSOFO ALFA</span>
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button onclick="returnToMenu()" class="btn-neon-cyan px-7 py-3 rounded font-bold font-orbitron text-sm">
+                        VOLVER AL MENÚ
+                    </button>
+                    <button onclick="openBlackBoxDossier()" class="btn-neon-magenta px-7 py-3 rounded font-bold font-orbitron text-sm">
+                        CONSULTAR DOSSIER
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== MODAL ACADÉMICO: DOSSIER ==================== -->
+        <div id="modal-dossier" class="hidden interactive absolute top-0 left-0 w-full h-full bg-black/95 flex flex-col items-center justify-center z-50 p-4">
+            <div class="glass-panel p-6 sm:p-8 w-full max-w-4xl max-h-[90vh] flex flex-col border-t-4 border-pink-500">
+                <div class="flex justify-between items-center border-b border-gray-800 pb-3 mb-4">
+                    <div>
+                        <span class="text-xs font-mono-tech text-pink-400 tracking-widest uppercase">INVESTIGACIÓN Y MARCO TEÓRICO</span>
+                        <h2 class="text-2xl sm:text-3xl font-orbitron font-bold text-white">DOSSIER: EPISTEMOLOGÍA DE LA IA GENERATIVA</h2>
+                    </div>
+                    <button onclick="closeBlackBoxDossier()" class="text-gray-400 hover:text-white text-2xl font-bold px-3 py-1">✕</button>
+                </div>
+
+                <div class="overflow-y-auto pr-2 space-y-4 text-xs sm:text-sm text-gray-200 leading-relaxed font-sans">
+                    <div class="bg-cyan-950/30 p-3.5 rounded-lg border border-cyan-800/60">
+                        <h3 class="font-orbitron font-bold text-cyan-400 text-sm mb-1">1. John Searle y "La Habitación China" (1980)</h3>
+                        <p>La manipulación de símbolos sintácticos carece de comprensión semántica, fenoménica y de cualia.</p>
+                    </div>
+
+                    <div class="bg-red-950/30 p-3.5 rounded-lg border border-red-800/60">
+                        <h3 class="font-orbitron font-bold text-red-400 text-sm mb-1">2. Epistemología Social y Sesgos en la IA</h3>
+                        <p>Los modelos no son neutrales; reproducen e intensifican las asimetrías y sesgos presentes en los datos de entrenamiento humanos.</p>
+                    </div>
+
+                    <div class="bg-purple-950/30 p-3.5 rounded-lg border border-purple-800/60">
+                        <h3 class="font-orbitron font-bold text-purple-400 text-sm mb-1">3. La Opacidad Epistémica (Humphreys, 2004)</h3>
+                        <p>En redes neuronales profundas con miles de millones de parámetros, es imposible auditar paso a paso el razonamiento causal.</p>
+                    </div>
+
+                    <div class="bg-emerald-950/30 p-3.5 rounded-lg border border-emerald-800/60">
+                        <h3 class="font-orbitron font-bold text-emerald-400 text-sm mb-1">4. Loros Estocásticos (Bender & Gebru, 2021)</h3>
+                        <p>Los LLMs cosen cadenas de palabras por probabilidad sin intencionalidad comunicativa ni modelo del mundo empírico.</p>
+                    </div>
+
+                    <div class="bg-rose-950/30 p-3.5 rounded-lg border border-rose-800/60">
+                        <h3 class="font-orbitron font-bold text-rose-400 text-sm mb-1">5. Colapso del Modelo (Shumailov et al., 2024)</h3>
+                        <p>El re-entrenamiento recursivo de IAs con datos sintéticos propios destruye la distribución empírica original en un colapso irreversible.</p>
+                    </div>
+
+                    <div class="bg-blue-950/30 p-3.5 rounded-lg border border-blue-800/60">
+                        <h3 class="font-orbitron font-bold text-blue-400 text-sm mb-1">6. Injusticia Testimonial (Miranda Fricker, 2007)</h3>
+                        <p>La automatización algorítmica encubre la opresión epistémica otorgando un déficit de credibilidad cuantificado a colectivos vulnerables.</p>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-gray-800 mt-4 flex justify-end">
+                    <button onclick="closeBlackBoxDossier()" class="btn-neon-cyan px-6 py-2.5 rounded font-orbitron text-xs">
+                        CERRAR DOSSIER
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ==================== LÓGICA PRINCIPAL DEL VIDEOJUEGO ==================== -->
+    <script>
+        /**
+         * NEON ORACLE 3D: 6 NODOS EPISTEMOLÓGICOS RTX
+         * Three.js r128 + Tone.js + UnrealBloomPass RTX + Arquitectura Modular
+         */
+
+        const AudioManager = {
+            initialized: false,
+            polySynth: null,
+            footstepSynth: null,
+            jumpSynth: null,
+            alarmSynth: null,
+            empSynth: null,
+            heartbeatSynth: null,
+            doorSynth: null,
+            fnafJumpscareSynth: null,
+            fluorescentHum: null,
+            lastStepTime: 0,
+            lastHeartbeatTime: 0,
+
+            async init() {
+                if (this.initialized) return;
+                try {
+                    await Tone.start();
+
+                    this.polySynth = new Tone.PolySynth(Tone.Synth, {
+                        oscillator: { type: "triangle" },
+                        envelope: { attack: 0.02, decay: 0.2, sustain: 0.2, release: 0.8 }
+                    }).toDestination();
+                    this.polySynth.volume.value = -12;
+
+                    this.footstepSynth = new Tone.NoiseSynth({
+                        noise: { type: "brown" },
+                        envelope: { attack: 0.005, decay: 0.07, sustain: 0 }
+                    }).toDestination();
+                    this.footstepSynth.volume.value = -20;
+
+                    this.jumpSynth = new Tone.Synth({
+                        oscillator: { type: "sine" },
+                        envelope: { attack: 0.01, decay: 0.25, sustain: 0, release: 0.2 }
+                    }).toDestination();
+                    this.jumpSynth.volume.value = -14;
+
+                    this.alarmSynth = new Tone.Synth({
+                        oscillator: { type: "sawtooth" },
+                        envelope: { attack: 0.05, decay: 0.2, sustain: 0.6, release: 0.4 }
+                    }).toDestination();
+                    this.alarmSynth.volume.value = -10;
+
+                    this.empSynth = new Tone.MembraneSynth({
+                        pitchDecay: 0.08, octaves: 6,
+                        oscillator: { type: "sine" },
+                        envelope: { attack: 0.001, decay: 0.8, sustain: 0.01, release: 1.4 }
+                    }).toDestination();
+                    this.empSynth.volume.value = -4;
+
+                    this.heartbeatSynth = new Tone.MembraneSynth({
+                        pitchDecay: 0.02, octaves: 2,
+                        oscillator: { type: "sine" },
+                        envelope: { attack: 0.01, decay: 0.15, sustain: 0, release: 0.1 }
+                    }).toDestination();
+                    this.heartbeatSynth.volume.value = -6;
+
+                    this.doorSynth = new Tone.MembraneSynth({
+                        pitchDecay: 0.05, octaves: 4,
+                        oscillator: { type: "square" },
+                        envelope: { attack: 0.01, decay: 0.4, sustain: 0, release: 0.2 }
+                    }).toDestination();
+                    this.doorSynth.volume.value = -8;
+
+                    this.fnafJumpscareSynth = new Tone.NoiseSynth({
+                        noise: { type: "white" },
+                        envelope: { attack: 0.01, decay: 0.8, sustain: 0.3, release: 0.6 }
+                    }).toDestination();
+                    this.fnafJumpscareSynth.volume.value = -6;
+
+                    this.fluorescentHum = new Tone.Oscillator(60, "sawtooth").toDestination();
+                    this.fluorescentHum.volume.value = -28;
+                    this.fluorescentHum.start();
+
+                    this.initialized = true;
+                } catch (e) {
+                    console.warn("AudioContext requiere interacción:", e);
+                }
+            },
+
+            play(type) {
+                if (!this.initialized) return;
+                const now = Tone.now();
+
+                switch (type) {
+                    case 'start':
+                        this.polySynth.triggerAttackRelease(["C3", "G3", "C4", "E4"], "1s", now);
+                        break;
+                    case 'correct':
+                        this.polySynth.triggerAttackRelease(["C4", "E4", "G4", "C5"], "0.35s", now);
+                        break;
+                    case 'wrong':
+                        this.polySynth.triggerAttackRelease(["Db2", "F2", "Ab2"], "0.6s", now);
+                        break;
+                    case 'step':
+                        if (now > this.lastStepTime + 0.18) {
+                            this.footstepSynth.triggerAttackRelease("16n", now);
+                            this.lastStepTime = now;
+                        }
+                        break;
+                    case 'jump':
+                        this.jumpSynth.triggerAttackRelease("C3", "0.2s", now);
+                        break;
+                    case 'collect':
+                        this.polySynth.triggerAttackRelease(["A4", "E5"], "16n", now);
+                        break;
+                    case 'emp':
+                        this.empSynth.triggerAttackRelease("A0", "1.5s", now);
+                        break;
+                    case 'flash':
+                        this.polySynth.triggerAttackRelease(["G6", "B6", "D7"], "0.5s", now);
+                        break;
+                    case 'shield':
+                        this.polySynth.triggerAttackRelease(["E4", "B4", "E5"], "0.8s", now);
+                        break;
+                    case 'alarm':
+                        this.alarmSynth.triggerAttackRelease("F#4", "8n", now);
+                        break;
+                    case 'fnaf_wake':
+                        this.fnafJumpscareSynth.triggerAttackRelease("2n", now);
+                        break;
+                    case 'door_slam':
+                        this.doorSynth.triggerAttackRelease("D1", "0.4s", now);
+                        break;
+                    case 'heartbeat':
+                        if (now > this.lastHeartbeatTime + 0.45) {
+                            this.heartbeatSynth.triggerAttackRelease("C1", "16n", now);
+                            this.lastHeartbeatTime = now;
+                        }
+                        break;
+                    case 'victory':
+                        this.polySynth.triggerAttackRelease(["C4", "G4", "C5", "E5", "G5"], "2s", now);
+                        break;
+                }
+            }
+        };
+
+        const gameState = {
+            currentNodeIndex: 0,
+            timeLeft: 360,
+            timerId: null,
+            isPlaying: false,
+            isPaused: false,
+            score: 0,
+            collectedCount: 0,
+            isChased: false,
+            stamina: 100,
+            isSprinting: false,
+            isThirdPerson: true,
+            totalItemsUsed: 0,
+            modalActionPending: null,
+            fnafModeActive: false,
+            securityDoorClosed: false,
+
+            inventory: {
+                emp: 1, flash: 0, decoy: 0, shield: 0
+            },
+            activeCooldowns: {
+                shield: false
+            },
+            decoyPosition: null,
+            enemyFrozenUntil: 0
+        };
+
+        let scene, camera, renderer, clock;
+        let dirLight, ambientLight;
+        let playerGroup, monaChinaEntity, freddyEntity, bonnieEntity;
+        let doorTruthGroup, doorHallucinationGroup;
+        let skyBeamTruth, skyBeamHallucination;
+        let decoyMesh = null;
+
+        let playerVelocity = new THREE.Vector3();
+        let isGrounded = true;
+        let walkCycleTime = 0;
+        let cameraYaw = 0;
+        let cameraPitch = 0.22;
+        let cameraDistance = 16.0;
+
+        const inputKeys = {
+            w: false, a: false, s: false, d: false,
+            ' ': false, shift: false,
+            arrowup: false, arrowdown: false, arrowleft: false, arrowright: false
+        };
+
+        function init3D() {
+            const container = document.getElementById('canvas-container');
+            clock = new THREE.Clock();
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xd6ba73);
+            scene.fog = new THREE.Fog(0xd6ba73, 20, 160);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.15;
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            container.appendChild(renderer.domElement);
+
+            setupLights();
+            LevelManager.init();
+            RTXPostprocessing.init(renderer, scene, camera);
+
+            buildCoolPlayerCharacter();
+            buildMonaChinaAnime();
+            buildFNAFAnimatronics();
+            buildArchitecturalDoors();
+            setupInputListeners();
+
+            // Asegurar que la retícula esté oculta en 3ra persona de entrada
+            document.getElementById('crosshair').style.display = 'none';
+
+            animate();
+        }
+
+        function setupLights() {
+            ambientLight = new THREE.AmbientLight(0xfffae0, 0.6);
+            scene.add(ambientLight);
+
+            dirLight = new THREE.DirectionalLight(0xfff5cc, 0.8);
+            dirLight.position.set(35, 75, 35);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            dirLight.shadow.camera.near = 1.0;
+            dirLight.shadow.camera.far = 280;
+            dirLight.shadow.camera.left = -140;
+            dirLight.shadow.camera.right = 140;
+            dirLight.shadow.camera.top = 140;
+            dirLight.shadow.camera.bottom = -140;
+            dirLight.shadow.bias = -0.0006;
+            scene.add(dirLight);
+        }
+
+        function buildCoolPlayerCharacter() {
+            playerGroup = new THREE.Group();
+
+            const jacketMat = new THREE.MeshStandardMaterial({ color: 0x1a2639, roughness: 0.4, metalness: 0.2 });
+            const neonStripeMat = new THREE.MeshStandardMaterial({ 
+                color: 0x00f3ff, 
+                emissive: 0x00f3ff, 
+                emissiveIntensity: 1.3 
+            });
+
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.4, 1.1), jacketMat);
+            torso.position.y = 2.6;
+            torso.castShadow = true;
+            torso.receiveShadow = true;
+            playerGroup.add(torso);
+
+            const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.82, 0.25, 1.12), neonStripeMat);
+            stripe.position.y = 2.7;
+            playerGroup.add(stripe);
+
+            const headMat = new THREE.MeshStandardMaterial({ color: 0xffdfba, roughness: 0.3 });
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.75, 16, 16), headMat);
+            head.position.y = 4.2;
+            head.castShadow = true;
+            playerGroup.add(head);
+
+            const hairMat = new THREE.MeshStandardMaterial({ color: 0x222233, roughness: 0.5 });
+            const hair = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.8, 1.6), hairMat);
+            hair.position.set(0, 4.6, -0.1);
+            hair.castShadow = true;
+            playerGroup.add(hair);
+
+            const visor = new THREE.Mesh(
+                new THREE.BoxGeometry(1.1, 0.3, 0.6),
+                neonStripeMat
+            );
+            visor.position.set(0, 4.25, 0.6);
+            playerGroup.add(visor);
+
+            const armMat = new THREE.MeshStandardMaterial({ color: 0x1a2639, roughness: 0.4 });
+            const armL = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 1.8), armMat);
+            armL.position.set(-1.2, 2.5, 0);
+            armL.castShadow = true;
+            const armR = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 1.8), armMat);
+            armR.position.set(1.2, 2.5, 0);
+            armR.castShadow = true;
+            playerGroup.add(armL);
+            playerGroup.add(armR);
+
+            const pantsMat = new THREE.MeshStandardMaterial({ color: 0x111622, roughness: 0.7 });
+            const legL = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.25, 2.0), pantsMat);
+            legL.position.set(-0.5, 1.0, 0);
+            legL.castShadow = true;
+            const legR = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.25, 2.0), pantsMat);
+            legR.position.set(0.5, 1.0, 0);
+            legR.castShadow = true;
+            playerGroup.add(legL);
+            playerGroup.add(legR);
+
+            const shoeL = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.25, 1.0), neonStripeMat);
+            shoeL.position.set(-0.5, 0.12, 0.1);
+            const shoeR = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.25, 1.0), neonStripeMat);
+            shoeR.position.set(0.5, 0.12, 0.1);
+            playerGroup.add(shoeL);
+            playerGroup.add(shoeR);
+
+            playerGroup.userData = { armL, armR, legL, legR, torso };
+            scene.add(playerGroup);
+        }
+
+        function buildMonaChinaAnime() {
+            monaChinaEntity = new THREE.Group();
+
+            const skinMat = new THREE.MeshStandardMaterial({ color: 0xffdfba, roughness: 0.3 });
+            const head = new THREE.Mesh(new THREE.SphereGeometry(1.15, 16, 16), skinMat);
+            head.position.y = 5.0;
+            head.castShadow = true;
+            monaChinaEntity.add(head);
+
+            const eyeMat = new THREE.MeshStandardMaterial({ 
+                color: 0xff0055, 
+                emissive: 0xff0055, 
+                emissiveIntensity: 1.5 
+            });
+            const eyeGeo = new THREE.PlaneGeometry(0.5, 0.65);
+            const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeL.position.set(-0.38, 5.05, 1.1);
+            const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeR.position.set(0.38, 5.05, 1.1);
+            monaChinaEntity.add(eyeL);
+            monaChinaEntity.add(eyeR);
+
+            const hairMat = new THREE.MeshStandardMaterial({ color: 0xff2288, roughness: 0.35 });
+            const bangs = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 0.8), hairMat);
+            bangs.position.set(0, 5.65, 0.7);
+            bangs.castShadow = true;
+            monaChinaEntity.add(bangs);
+
+            const tailGeo = new THREE.CylinderGeometry(0.2, 0.65, 3.6, 8);
+            const tailL = new THREE.Mesh(tailGeo, hairMat);
+            tailL.position.set(-1.5, 4.2, -0.4);
+            tailL.rotation.z = 0.35;
+            tailL.castShadow = true;
+            const tailR = new THREE.Mesh(tailGeo, hairMat);
+            tailR.position.set(1.5, 4.2, -0.4);
+            tailR.rotation.z = -0.35;
+            tailR.castShadow = true;
+            monaChinaEntity.add(tailL);
+            monaChinaEntity.add(tailR);
+
+            const uniformMat = new THREE.MeshStandardMaterial({ color: 0x1f2648, roughness: 0.5 });
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.9, 0.9), uniformMat);
+            torso.position.y = 3.3;
+            torso.castShadow = true;
+            monaChinaEntity.add(torso);
+
+            const skirt = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.3, 12, 1, true), uniformMat);
+            skirt.position.y = 2.2;
+            skirt.rotation.x = Math.PI;
+            skirt.castShadow = true;
+            monaChinaEntity.add(skirt);
+
+            const legMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+            const legL = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 2.1), legMat);
+            legL.position.set(-0.45, 1.05, 0);
+            legL.castShadow = true;
+            const legR = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 2.1), legMat);
+            legR.position.set(0.45, 1.05, 0);
+            legR.castShadow = true;
+            monaChinaEntity.add(legL);
+            monaChinaEntity.add(legR);
+
+            const stasis = new THREE.Mesh(
+                new THREE.SphereGeometry(3.4, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0x00f3ff, wireframe: true, transparent: true, opacity: 0 })
+            );
+            stasis.position.y = 3.5;
+            monaChinaEntity.add(stasis);
+
+            monaChinaEntity.userData = { tailL, tailR, stasis, hairMat, speed: 14.0 };
+            monaChinaEntity.visible = false;
+            scene.add(monaChinaEntity);
+        }
+
+        function buildFNAFAnimatronics() {
+            freddyEntity = new THREE.Group();
+            const fMat = new THREE.MeshStandardMaterial({ color: 0x613410, roughness: 0.75, metalness: 0.2 });
+            const fTorso = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3.4, 1.8), fMat);
+            fTorso.position.y = 3.8;
+            fTorso.castShadow = true;
+            freddyEntity.add(fTorso);
+
+            const fHead = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.0, 2.0), fMat);
+            fHead.position.y = 6.2;
+            fHead.castShadow = true;
+            freddyEntity.add(fHead);
+
+            const topHat = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 1.1), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+            topHat.position.y = 7.6;
+            topHat.castShadow = true;
+            freddyEntity.add(topHat);
+
+            const jaw = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.45, 1.4), fMat);
+            jaw.position.set(0, 5.1, 0.4);
+            jaw.castShadow = true;
+            freddyEntity.add(jaw);
+
+            const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.8 });
+            const fEyeL = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), eyeMat);
+            fEyeL.position.set(-0.55, 6.3, 1.05);
+            const fEyeR = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), eyeMat);
+            fEyeR.position.set(0.55, 6.3, 1.05);
+            freddyEntity.add(fEyeL);
+            freddyEntity.add(fEyeR);
+
+            freddyEntity.userData = { jaw, speed: 15.0 };
+            freddyEntity.visible = false;
+            scene.add(freddyEntity);
+
+            bonnieEntity = new THREE.Group();
+            const bMat = new THREE.MeshStandardMaterial({ color: 0x483d8b, roughness: 0.7, metalness: 0.2 });
+            const bTorso = new THREE.Mesh(new THREE.BoxGeometry(2.3, 3.2, 1.6), bMat);
+            bTorso.position.y = 3.6;
+            bTorso.castShadow = true;
+            bonnieEntity.add(bTorso);
+
+            const bHead = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.9, 1.8), bMat);
+            bHead.position.y = 6.0;
+            bHead.castShadow = true;
+            bonnieEntity.add(bHead);
+
+            const earGeo = new THREE.BoxGeometry(0.4, 2.4, 0.35);
+            const earL = new THREE.Mesh(earGeo, bMat);
+            earL.position.set(-0.65, 7.8, 0);
+            earL.castShadow = true;
+            const earR = new THREE.Mesh(earGeo, bMat);
+            earR.position.set(0.65, 7.8, 0);
+            earR.castShadow = true;
+            bonnieEntity.add(earL);
+            bonnieEntity.add(earR);
+
+            const bEyeMat = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 1.4 });
+            const bEyeL = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), bEyeMat);
+            bEyeL.position.set(-0.5, 6.1, 0.95);
+            const bEyeR = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), bEyeMat);
+            bEyeR.position.set(0.5, 6.1, 0.95);
+            bonnieEntity.add(bEyeL);
+            bonnieEntity.add(bEyeR);
+
+            bonnieEntity.userData = { earL, earR, speed: 17.5 };
+            bonnieEntity.visible = false;
+            scene.add(bonnieEntity);
+        }
+
+        function createDoorTexture(title, subtitle, colorHex, borderHex) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024;
+            canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#060a16';
+            ctx.fillRect(0, 0, 1024, 1024);
+            ctx.fillStyle = colorHex;
+            ctx.fillRect(40, 40, 944, 944);
+
+            ctx.strokeStyle = borderHex;
+            ctx.lineWidth = 28;
+            ctx.strokeRect(30, 30, 964, 964);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 8;
+            ctx.strokeRect(70, 70, 884, 884);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 120px "Orbitron"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(title, 512, 420);
+
+            ctx.fillStyle = borderHex;
+            ctx.font = 'bold 44px "Share Tech Mono"';
+            ctx.fillText(subtitle, 512, 590);
+
+            ctx.fillStyle = '#eeeeee';
+            ctx.font = '32px "Rajdhani"';
+            ctx.fillText("CAMINA FÍSICAMENTE HACIA EL PORTAL", 512, 700);
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function buildArchitecturalDoors() {
+            doorTruthGroup = buildSingleDoorGroup(
+                "VERDAD", "// TESTIMONIO FIDEDIGNO //", "rgba(0, 80, 130, 0.85)", "#00f3ff"
+            );
+            scene.add(doorTruthGroup);
+
+            doorHallucinationGroup = buildSingleDoorGroup(
+                "ALUCINACIÓN", "// ERROR ESTOCÁSTICO //", "rgba(130, 0, 60, 0.85)", "#ff0077"
+            );
+            scene.add(doorHallucinationGroup);
+
+            const beamGeo = new THREE.CylinderGeometry(1.6, 1.6, 260, 16);
+            skyBeamTruth = new THREE.Mesh(beamGeo, new THREE.MeshStandardMaterial({ 
+                color: 0x00f3ff, 
+                emissive: 0x00f3ff, 
+                emissiveIntensity: 1.5, 
+                transparent: true, 
+                opacity: 0.45 
+            }));
+            skyBeamHallucination = new THREE.Mesh(beamGeo, new THREE.MeshStandardMaterial({ 
+                color: 0xff0077, 
+                emissive: 0xff0077, 
+                emissiveIntensity: 1.5, 
+                transparent: true, 
+                opacity: 0.45 
+            }));
+            scene.add(skyBeamTruth);
+            scene.add(skyBeamHallucination);
+
+            positionDoorsForNode();
+        }
+
+        function buildSingleDoorGroup(title, subtitle, color, border) {
+            const group = new THREE.Group();
+
+            const frameMat = new THREE.MeshStandardMaterial({ color: 0x222a38, metalness: 0.7, roughness: 0.3 });
+            const pilarL = new THREE.Mesh(new THREE.BoxGeometry(3, 20, 3), frameMat);
+            pilarL.position.set(-13, 10, 0);
+            pilarL.castShadow = true;
+            pilarL.receiveShadow = true;
+            const pilarR = new THREE.Mesh(new THREE.BoxGeometry(3, 20, 3), frameMat);
+            pilarR.position.set(13, 10, 0);
+            pilarR.castShadow = true;
+            pilarR.receiveShadow = true;
+            const dintel = new THREE.Mesh(new THREE.BoxGeometry(29, 3, 3), frameMat);
+            dintel.position.set(0, 20, 0);
+            dintel.castShadow = true;
+            group.add(pilarL);
+            group.add(pilarR);
+            group.add(dintel);
+
+            const panelMat = new THREE.MeshStandardMaterial({
+                map: createDoorTexture(title, subtitle, color, border),
+                emissive: new THREE.Color(border).multiplyScalar(0.2),
+                roughness: 0.4
+            });
+            const panel = new THREE.Mesh(new THREE.BoxGeometry(23, 18, 1.2), panelMat);
+            panel.position.set(0, 9, 0);
+            panel.castShadow = true;
+            group.add(panel);
+
+            const signMat = new THREE.MeshStandardMaterial({
+                color: border,
+                emissive: border,
+                emissiveIntensity: 1.2
+            });
+            const sign = new THREE.Mesh(new THREE.BoxGeometry(20, 2.5, 0.8), signMat);
+            sign.position.set(0, 22, 0);
+            group.add(sign);
+
+            return group;
+        }
+
+        function positionDoorsForNode() {
+            const level = LevelManager.getCurrentLevel();
+            if (!level) return;
+
+            doorTruthGroup.position.set(level.doors.truth.x, 0, level.doors.truth.z);
+            doorHallucinationGroup.position.set(level.doors.hallucination.x, 0, level.doors.hallucination.z);
+
+            doorTruthGroup.visible = true;
+            doorHallucinationGroup.visible = true;
+
+            skyBeamTruth.position.copy(doorTruthGroup.position).setY(130);
+            skyBeamHallucination.position.copy(doorHallucinationGroup.position).setY(130);
+
+            skyBeamTruth.visible = true;
+            skyBeamHallucination.visible = true;
+        }
+
+        function useItem(type) {
+            if (!gameState.isPlaying || gameState.isPaused) return;
+
+            if (type === 'emp' && gameState.inventory.emp > 0) {
+                gameState.inventory.emp--;
+                gameState.totalItemsUsed++;
+                gameState.enemyFrozenUntil = Date.now() + 4500;
+                AudioManager.play('emp');
+                triggerFlashOverlay('#00f3ff');
+                showHUDNotification("¡PULSO EMP! PERSEGUIDOR CONGELADO 4.5s");
+            } 
+            else if (type === 'flash' && gameState.inventory.flash > 0) {
+                gameState.inventory.flash--;
+                gameState.totalItemsUsed++;
+                gameState.enemyFrozenUntil = Date.now() + 5000;
+                AudioManager.play('flash');
+                triggerFlashOverlay('#ffffff');
+                showHUDNotification("¡FLASHBANG DETONADA! CEGANDO ENEMIGOS");
+            } 
+            else if (type === 'decoy' && gameState.inventory.decoy > 0) {
+                gameState.inventory.decoy--;
+                gameState.totalItemsUsed++;
+                AudioManager.play('collect');
+
+                gameState.decoyPosition = playerGroup.position.clone();
+                if (!decoyMesh) {
+                    decoyMesh = new THREE.Mesh(
+                        new THREE.SphereGeometry(2.0, 12, 12),
+                        new THREE.MeshStandardMaterial({ 
+                            color: 0xffff00, 
+                            emissive: 0xffff00, 
+                            emissiveIntensity: 1.5,
+                            wireframe: true 
+                        })
+                    );
+                    scene.add(decoyMesh);
+                }
+                decoyMesh.position.copy(gameState.decoyPosition);
+                decoyMesh.visible = true;
+
+                showHUDNotification("¡SEÑUELO FAZBEAR ACTIVO! ATRAYENDO AMENAZAS");
+
+                setTimeout(() => {
+                    gameState.decoyPosition = null;
+                    if (decoyMesh) decoyMesh.visible = false;
+                }, 6000);
+            } 
+            else if (type === 'shield' && gameState.inventory.shield > 0) {
+                gameState.inventory.shield--;
+                gameState.activeCooldowns.shield = true;
+                gameState.totalItemsUsed++;
+                AudioManager.play('shield');
+                showHUDNotification("¡ESCUDO ACTIVO! ABSORBE 1 IMPACTO");
+            }
+
+            updateInventoryHUD();
+        }
+
+        function triggerFlashOverlay(color) {
+            const el = document.getElementById('flash-overlay');
+            el.style.backgroundColor = color;
+            el.style.opacity = '0.9';
+            setTimeout(() => { el.style.opacity = '0'; }, 300);
+        }
+
+        function updateInventoryHUD() {
+            document.getElementById('count-emp').innerText = `x${gameState.inventory.emp}`;
+            document.getElementById('count-flash').innerText = `x${gameState.inventory.flash}`;
+            document.getElementById('count-decoy').innerText = `x${gameState.inventory.decoy}`;
+            document.getElementById('count-shield').innerText = `x${gameState.inventory.shield}`;
+
+            const shieldSlot = document.getElementById('slot-shield');
+            if (gameState.activeCooldowns.shield) {
+                shieldSlot.classList.add('active-shield');
+            } else {
+                shieldSlot.classList.remove('active-shield');
+            }
+        }
+
+        function startGame() {
+            AudioManager.init();
+            AudioManager.play('start');
+
+            document.getElementById('screen-menu').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+            document.getElementById('screen-game').classList.add('flex');
+
+            gameState.currentNodeIndex = 0;
+            gameState.timeLeft = 360;
+            gameState.isPlaying = true;
+            gameState.isPaused = false;
+            gameState.score = 0;
+            gameState.collectedCount = 0;
+            gameState.isChased = false;
+            gameState.fnafModeActive = false;
+            gameState.securityDoorClosed = false;
+            gameState.inventory = { emp: 1, flash: 0, decoy: 0, shield: 0 };
+            gameState.activeCooldowns.shield = false;
+
+            updateInventoryHUD();
+            resetPlayerAndLevel();
+            loadNodeData();
+
+            if (gameState.timerId) clearInterval(gameState.timerId);
+            gameState.timerId = setInterval(() => {
+                if (gameState.isPlaying && !gameState.isPaused) {
+                    gameState.timeLeft--;
+                    updateHUD();
+
+                    if (gameState.isChased) AudioManager.play('alarm');
+
+                    if (gameState.timeLeft <= 0) {
+                        alert("TIEMPO AGOTADO. La Opacidad Epistémica te ha consumido.");
+                        returnToMenu();
+                    }
+                }
+            }, 1000);
+        }
+
+        function resetPlayerAndLevel() {
+            playerGroup.position.set(0, 0, 0);
+            playerVelocity.set(0, 0, 0);
+            cameraYaw = 0;
+            cameraPitch = 0.22;
+
+            monaChinaEntity.visible = false;
+            freddyEntity.visible = false;
+            bonnieEntity.visible = false;
+            gameState.isChased = false;
+            gameState.fnafModeActive = false;
+            gameState.securityDoorClosed = false;
+
+            document.getElementById('btn-security-action').style.display = 'none';
+
+            LevelManager.loadLevel(gameState.currentNodeIndex, scene, dirLight, ambientLight);
+
+            doorTruthGroup.visible = true;
+            doorHallucinationGroup.visible = true;
+            skyBeamTruth.visible = true;
+            skyBeamHallucination.visible = true;
+
+            document.getElementById('chase-overlay').classList.remove('chase-active');
+            document.getElementById('blip-chaser').classList.add('hidden');
+            document.getElementById('blip-security').classList.add('hidden');
+            document.getElementById('player-status-badge').innerText = "EXPLORANDO";
+            document.getElementById('player-status-badge').className = "text-emerald-400 font-bold";
+
+            positionDoorsForNode();
+            LevelManager.spawnCollectibles(scene, 22);
+            updateHUD();
+        }
+
+        function loadNodeData() {
+            const level = LevelManager.getCurrentLevel();
+            document.getElementById('progress-display').innerText = `NODO ${gameState.currentNodeIndex + 1} / ${LevelManager.levels.length}`;
+            document.getElementById('room-name').innerText = level.roomName;
+            document.getElementById('statement-text').innerText = level.statement;
+
+            if (level.theme === "fnaf_pizzeria") {
+                document.getElementById('objective-subtext').innerText = "¡ZONA FNAF! Evalúa o corre a la Sala de Seguridad";
+            } else {
+                document.getElementById('objective-subtext').innerText = "[Explora el entorno y cruza la puerta física correcta]";
+            }
+        }
+
+        function updateHUD() {
+            const mins = Math.floor(gameState.timeLeft / 60).toString().padStart(2, '0');
+            const secs = (gameState.timeLeft % 60).toString().padStart(2, '0');
+            document.getElementById('time-display').innerText = `${mins}:${secs}`;
+            document.getElementById('score-display').innerText = `DATOS: ${gameState.score}`;
+            document.getElementById('stamina-bar').style.width = `${gameState.stamina}%`;
+
+            if (doorTruthGroup && doorTruthGroup.visible) {
+                const dist = Math.round(playerGroup.position.distanceTo(doorTruthGroup.position));
+                document.getElementById('distance-display').innerText = `PUERTA: ${dist} m`;
+            }
+        }
+
+        function showHUDNotification(text, isDanger = false) {
+            const el = document.getElementById('hud-notification');
+            el.innerText = text;
+            el.style.borderColor = isDanger ? 'var(--neon-magenta)' : 'var(--neon-cyan)';
+            el.style.textShadow = isDanger ? '0 0 15px #ff0077' : '0 0 15px #00f3ff';
+            el.style.opacity = '1';
+            setTimeout(() => { el.style.opacity = '0'; }, 3500);
+        }
+
+        function onDoorReached(choseTruth, chosenDoorGroup) {
+            if (gameState.isPaused || !gameState.isPlaying) return;
+
+            const currentLevel = LevelManager.getCurrentLevel();
+            const isCorrect = (choseTruth === currentLevel.isTruth);
+
+            if (isCorrect) {
+                AudioManager.play('correct');
+                gameState.isPaused = true;
+                gameState.isChased = false;
+                if (document.pointerLockElement) document.exitPointerLock();
+                document.getElementById('chase-overlay').classList.remove('chase-active');
+
+                if (currentLevel.rewardItem) {
+                    gameState.inventory[currentLevel.rewardItem]++;
+                    document.getElementById('reward-item-name').innerText = `¡${currentLevel.rewardName}!`;
+                    document.getElementById('reward-notification-box').classList.remove('hidden');
+                } else {
+                    document.getElementById('reward-notification-box').classList.add('hidden');
+                }
+                updateInventoryHUD();
+
+                const modal = document.getElementById('modal-feedback');
+                document.getElementById('feedback-badge').innerText = "VERIFICACIÓN EPISTÉMICA EXITOSA";
+                document.getElementById('feedback-title').className = "text-2xl sm:text-4xl font-orbitron font-bold mb-3 tracking-wider text-cyan-400";
+                document.getElementById('feedback-title').innerText = "¡PUERTA CORRECTA ATRAVESADA!";
+                document.getElementById('feedback-explanation').innerHTML = currentLevel.explanation;
+
+                const btnNext = document.getElementById('btn-next-node');
+                if (gameState.currentNodeIndex < LevelManager.levels.length - 1) {
+                    btnNext.innerText = "CONTINUAR AL SIGUIENTE NODO ->";
+                    gameState.modalActionPending = 'next_node';
+                } else {
+                    btnNext.innerText = "COMPLETAR PROTOCOLO Y ESCAPAR ->";
+                    gameState.modalActionPending = 'victory';
+                }
+
+                modal.classList.remove('hidden');
+
+            } else {
+                AudioManager.play('wrong');
+                chosenDoorGroup.visible = false;
+                if (chosenDoorGroup === doorTruthGroup) {
+                    skyBeamTruth.visible = false;
+                } else {
+                    skyBeamHallucination.visible = false;
+                }
+
+                gameState.isChased = true;
+                document.getElementById('chase-overlay').classList.add('chase-active');
+                document.getElementById('blip-chaser').classList.remove('hidden');
+                document.getElementById('player-status-badge').innerText = "¡EN PERSECUCIÓN!";
+                document.getElementById('player-status-badge').className = "text-red-500 font-bold animate-pulse";
+
+                const survivingDoor = currentLevel.isTruth ? doorTruthGroup : doorHallucinationGroup;
+                const survivingBeam = currentLevel.isTruth ? skyBeamTruth : skyBeamHallucination;
+
+                if (currentLevel.theme === "backrooms") {
+                    showHUDNotification("¡ALUCINACIÓN! LA PUERTA HUYE Y LA MONA CHINA DESPIERTA...", true);
+                    survivingDoor.position.set(currentLevel.doors.teleportTarget.x, 0, currentLevel.doors.teleportTarget.z);
+                    survivingBeam.position.copy(survivingDoor.position).setY(130);
+
+                    monaChinaEntity.userData.hairMat.color.setHex(0xff2288);
+                    monaChinaEntity.userData.speed = 14.0;
+                    const spawnDist = 45;
+                    monaChinaEntity.position.set(
+                        playerGroup.position.x - Math.sin(cameraYaw) * spawnDist,
+                        0,
+                        playerGroup.position.z - Math.cos(cameraYaw) * spawnDist
+                    );
+                    monaChinaEntity.visible = true;
+
+                } else if (currentLevel.theme === "fnaf_pizzeria") {
+                    gameState.fnafModeActive = true;
+                    AudioManager.play('fnaf_wake');
+                    document.getElementById('blip-security').classList.remove('hidden');
+                    document.getElementById('btn-security-action').style.display = 'block';
+
+                    showHUDNotification("¡ANIMATRÓNICOS ACTIVADOS! ¡CORRE A LA SALA DE SEGURIDAD!", true);
+
+                    freddyEntity.position.set(50, 0, 110);
+                    bonnieEntity.position.set(120, 0, -40);
+                    freddyEntity.visible = true;
+                    bonnieEntity.visible = true;
+
+                } else if (currentLevel.theme === "blackbox") {
+                    showHUDNotification("¡ERROR EN LA CAJA NEGRA! ENTIDAD SLENDERMAN ACECHA. ¡NO LE DES LA ESPALDA!", true);
+                    survivingDoor.position.set(currentLevel.doors.teleportTarget.x, 0, currentLevel.doors.teleportTarget.z);
+                    survivingBeam.position.copy(survivingDoor.position).setY(130);
+
+                    monaChinaEntity.userData.hairMat.color.setHex(0x9922ff);
+                    monaChinaEntity.userData.speed = 22.0;
+                    monaChinaEntity.position.set(
+                        playerGroup.position.x - Math.sin(cameraYaw) * 50,
+                        0,
+                        playerGroup.position.z - Math.cos(cameraYaw) * 50
+                    );
+                    monaChinaEntity.visible = true;
+
+                } else {
+                    showHUDNotification("¡ALUCINACIÓN DETECTADA! EL DEFENSOR LATENTE TE PERSIGUE.", true);
+                    survivingDoor.position.set(currentLevel.doors.teleportTarget.x, 0, currentLevel.doors.teleportTarget.z);
+                    survivingBeam.position.copy(survivingDoor.position).setY(130);
+
+                    monaChinaEntity.userData.hairMat.color.setHex(0x00ffd5);
+                    monaChinaEntity.userData.speed = 17.0;
+                    monaChinaEntity.position.set(
+                        playerGroup.position.x - Math.sin(cameraYaw) * 45,
+                        0,
+                        playerGroup.position.z - Math.cos(cameraYaw) * 45
+                    );
+                    monaChinaEntity.visible = true;
+                }
+            }
+        }
+
+        function triggerSecurityDoor() {
+            if (!gameState.fnafModeActive || gameState.securityDoorClosed) return;
+
+            gameState.securityDoorClosed = true;
+            const fnafLevel = Level2_FNAF;
+            if (fnafLevel && fnafLevel.securityOffice.doorMesh) {
+                fnafLevel.securityOffice.doorMesh.position.y = 7;
+            }
+            AudioManager.play('door_slam');
+            document.getElementById('btn-security-action').style.display = 'none';
+
+            showHUDNotification("¡PUERTA BLINDADA CERRADA! ¡ESTÁS A SALVO!");
+            document.getElementById('player-status-badge').innerText = "REFUGIADO EN SEGURIDAD";
+            document.getElementById('player-status-badge').className = "text-yellow-400 font-bold";
+
+            setTimeout(() => {
+                AudioManager.play('correct');
+                gameState.isPaused = true;
+                gameState.isChased = false;
+                if (document.pointerLockElement) document.exitPointerLock();
+                document.getElementById('chase-overlay').classList.remove('chase-active');
+
+                gameState.inventory.decoy++;
+                document.getElementById('reward-item-name').innerText = "¡SEÑUELO HOLOGRÁFICO FAZBEAR!";
+                document.getElementById('reward-notification-box').classList.remove('hidden');
+                updateInventoryHUD();
+
+                const modal = document.getElementById('modal-feedback');
+                document.getElementById('feedback-badge').innerText = "REFUGIO Y SESGO AUDITADO";
+                document.getElementById('feedback-title').className = "text-2xl sm:text-4xl font-orbitron font-bold mb-3 tracking-wider text-cyan-400";
+                document.getElementById('feedback-title').innerText = "¡SUPERVIVENCIA EN FNAF LOGRADA!";
+                document.getElementById('feedback-explanation').innerHTML = Level2_FNAF.explanation;
+
+                const btnNext = document.getElementById('btn-next-node');
+                btnNext.innerText = "CONTINUAR AL SIGUIENTE NODO ->";
+                gameState.modalActionPending = 'next_node';
+
+                modal.classList.remove('hidden');
+            }, 2000);
+        }
+
+        function handleModalNext() {
+            document.getElementById('modal-feedback').classList.add('hidden');
+            if (gameState.modalActionPending === 'victory') {
+                handleVictory();
+            } else if (gameState.modalActionPending === 'retry') {
+                gameState.isPaused = false;
+            } else {
+                gameState.currentNodeIndex++;
+                resetPlayerAndLevel();
+                loadNodeData();
+                gameState.isPaused = false;
+            }
+        }
+
+        function onPlayerAttacked() {
+            if (gameState.activeCooldowns.shield) {
+                gameState.activeCooldowns.shield = false;
+                updateInventoryHUD();
+                AudioManager.play('shield');
+                triggerFlashOverlay('#00ff66');
+                showHUDNotification("¡ESCUDO ABSORBIÓ EL ATAQUE! ¡SIGUE!");
+                playerVelocity.z += 25;
+                return;
+            }
+
+            gameState.isPaused = true;
+            AudioManager.play('alarm');
+            if (document.pointerLockElement) document.exitPointerLock();
+
+            gameState.timeLeft = Math.max(0, gameState.timeLeft - 30);
+            updateHUD();
+
+            // Si es el Nivel 1, la Mona China dice "Six seven"
+            if (LevelManager.getCurrentLevel().id === 1) {
+                Level1_Backrooms.onPlayerKilled();
+            }
+
+            const modal = document.getElementById('modal-feedback');
+            document.getElementById('feedback-badge').innerText = "COLISIÓN DETECTADA";
+            document.getElementById('feedback-title').className = "text-2xl sm:text-4xl font-orbitron font-bold mb-3 tracking-wider text-red-500";
+            
+            if (LevelManager.getCurrentLevel().id === 1) {
+                document.getElementById('feedback-title').innerText = "¡LA MONA CHINA TE ATRAPÓ: «SIX SEVEN!»";
+            } else if (LevelManager.getCurrentLevel().id === 2) {
+                document.getElementById('feedback-title').innerText = "¡JUMPSCARE DE FREDDY FAZBEAR!";
+            } else {
+                document.getElementById('feedback-title').innerText = "¡HAS SIDO ALCANZADO!";
+            }
+
+            document.getElementById('feedback-explanation').innerHTML = "El perseguidor te atrapó.<br><br><strong class='text-red-400'>PENALIZACIÓN:</strong> -30 segundos de tiempo.<br>Usa tus armas de defensa (<kbd class='bg-black px-1 rounded'>E</kbd>, <kbd class='bg-black px-1 rounded'>Q</kbd>, <kbd class='bg-black px-1 rounded'>F</kbd>, <kbd class='bg-black px-1 rounded'>R</kbd>) y busca la salida.";
+
+            document.getElementById('reward-notification-box').classList.add('hidden');
+            const btnNext = document.getElementById('btn-next-node');
+            btnNext.innerText = "REINTENTAR ESCAPE ->";
+            gameState.modalActionPending = 'retry';
+
+            // Tiempo de gracia y distanciamiento de seguridad
+            gameState.enemyFrozenUntil = Date.now() + 4000;
+            if (monaChinaEntity && monaChinaEntity.visible) {
+                monaChinaEntity.position.set(monaChinaEntity.position.x + 55, 0, monaChinaEntity.position.z + 55);
+            }
+            if (freddyEntity && freddyEntity.visible) freddyEntity.position.set(50, 0, 110);
+            if (bonnieEntity && bonnieEntity.visible) bonnieEntity.position.set(120, 0, -40);
+
+            playerGroup.position.set(0, 0, playerGroup.position.z + 15);
+            playerVelocity.set(0, 0, 0);
+
+            modal.classList.remove('hidden');
+        }
+
+        function handleVictory() {
+            gameState.isPlaying = false;
+            AudioManager.play('victory');
+            if (document.pointerLockElement) document.exitPointerLock();
+
+            document.getElementById('screen-game').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('flex');
+            document.getElementById('modal-victory').classList.remove('hidden');
+
+            const mins = Math.floor(gameState.timeLeft / 60).toString().padStart(2, '0');
+            const secs = (gameState.timeLeft % 60).toString().padStart(2, '0');
+            document.getElementById('victory-time').innerText = `${mins}:${secs}`;
+            document.getElementById('victory-score').innerText = gameState.score;
+            document.getElementById('victory-items').innerText = gameState.totalItemsUsed;
+        }
+
+        function returnToMenu() {
+            document.getElementById('modal-victory').classList.add('hidden');
+            document.getElementById('modal-feedback').classList.add('hidden');
+            document.getElementById('screen-game').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('flex');
+            document.getElementById('screen-menu').classList.remove('hidden');
+        }
+
+        function openBlackBoxDossier() { document.getElementById('modal-dossier').classList.remove('hidden'); }
+        function closeBlackBoxDossier() { document.getElementById('modal-dossier').classList.add('hidden'); }
+
+        function toggleCameraView() {
+            gameState.isThirdPerson = !gameState.isThirdPerson;
+            const crosshairEl = document.getElementById('crosshair');
+            if (crosshairEl) {
+                crosshairEl.style.display = gameState.isThirdPerson ? 'none' : 'block';
+            }
+            showHUDNotification(gameState.isThirdPerson ? "CÁMARA: TERCERA PERSONA (PANORÁMICA)" : "CÁMARA: PRIMERA PERSONA (CON MIRA)");
+        }
+
+        function toggleRTXMode() {
+            const isEnabled = RTXPostprocessing.toggle();
+            document.getElementById('rtx-status-label').innerText = isEnabled ? "RTX: ON" : "RTX: OFF";
+            showHUDNotification(isEnabled ? "GRÁFICOS RTX BLOOM: ACTIVADOS" : "GRÁFICOS RTX BLOOM: DESACTIVADOS");
+        }
+
+        function setupInputListeners() {
+            document.getElementById('canvas-container').addEventListener('click', () => {
+                if (gameState.isPlaying && !gameState.isPaused) document.body.requestPointerLock();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (document.pointerLockElement === document.body && gameState.isPlaying && !gameState.isPaused) {
+                    cameraYaw -= e.movementX * 0.003;
+                    cameraPitch -= e.movementY * 0.003;
+                    cameraPitch = Math.max(-0.4, Math.min(0.85, cameraPitch));
+                }
+            });
+
+            window.addEventListener('wheel', (e) => {
+                if (gameState.isPlaying && !gameState.isPaused && gameState.isThirdPerson) {
+                    cameraDistance = Math.max(8.0, Math.min(26.0, cameraDistance + e.deltaY * 0.015));
+                }
+            }, { passive: true });
+
+            window.addEventListener('keydown', (e) => {
+                const k = e.key.toLowerCase();
+                if (inputKeys.hasOwnProperty(k)) inputKeys[k] = true;
+                if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                    inputKeys.shift = true;
+                }
+                if (e.key === ' ') inputKeys[' '] = true;
+
+                if (k === 'e') {
+                    if (gameState.fnafModeActive && Math.hypot(playerGroup.position.x - Level2_FNAF.securityOffice.x, playerGroup.position.z - Level2_FNAF.securityOffice.z) < 24) {
+                        triggerSecurityDoor();
+                    } else {
+                        useItem('emp');
+                    }
+                }
+                if (k === 'q') useItem('flash');
+                if (k === 'f') useItem('decoy');
+                if (k === 'r') useItem('shield');
+                if (k === 'v') toggleCameraView();
+            });
+
+            window.addEventListener('keyup', (e) => {
+                const k = e.key.toLowerCase();
+                if (inputKeys.hasOwnProperty(k)) inputKeys[k] = false;
+                if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                    inputKeys.shift = false;
+                }
+                if (e.key === ' ') inputKeys[' '] = false;
+            });
+
+            window.addEventListener('resize', () => {
+                if (camera && renderer) {
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                    RTXPostprocessing.setSize(window.innerWidth, window.innerHeight);
+                }
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1);
+
+            if (gameState.isPlaying && !gameState.isPaused) {
+                updatePlayer(delta);
+                updateCollectibles(delta);
+                updateEnemies(delta);
+                checkDoorCollisions();
+                updateCompass();
+            }
+
+            RTXPostprocessing.render(renderer, scene, camera);
+        }
+
+        function updatePlayer(delta) {
+            if (inputKeys.arrowleft) cameraYaw += 2.2 * delta;
+            if (inputKeys.arrowright) cameraYaw -= 2.2 * delta;
+            if (inputKeys.arrowup) cameraPitch += 1.6 * delta;
+            if (inputKeys.arrowdown) cameraPitch -= 1.6 * delta;
+            cameraPitch = Math.max(-0.4, Math.min(0.85, cameraPitch));
+
+            let baseSpeed = 16.0;
+            if (inputKeys.shift && gameState.stamina > 4) {
+                baseSpeed = 30.0;
+                gameState.stamina = Math.max(0, gameState.stamina - 28 * delta);
+                gameState.isSprinting = true;
+            } else {
+                gameState.stamina = Math.min(100, gameState.stamina + 20 * delta);
+                gameState.isSprinting = false;
+            }
+
+            const fwdX = -Math.sin(cameraYaw);
+            const fwdZ = -Math.cos(cameraYaw);
+            const rightX = Math.cos(cameraYaw);
+            const rightZ = -Math.sin(cameraYaw);
+
+            let moveX = 0, moveZ = 0;
+            if (inputKeys.w) { moveX += fwdX; moveZ += fwdZ; }
+            if (inputKeys.s) { moveX -= fwdX; moveZ -= fwdZ; }
+            if (inputKeys.d) { moveX += rightX; moveZ += rightZ; }
+            if (inputKeys.a) { moveX -= rightX; moveZ -= rightZ; }
+
+            const moveLen = Math.hypot(moveX, moveZ);
+            if (moveLen > 0) {
+                moveX /= moveLen;
+                moveZ /= moveLen;
+                playerGroup.rotation.y = Math.atan2(moveX, moveZ);
+            }
+
+            playerVelocity.x += moveX * baseSpeed * 5.0 * delta;
+            playerVelocity.z += moveZ * baseSpeed * 5.0 * delta;
+            const damping = Math.exp(-8.5 * delta);
+            playerVelocity.x *= damping;
+            playerVelocity.z *= damping;
+
+            if (inputKeys[' '] && isGrounded) {
+                playerVelocity.y = 12.0;
+                isGrounded = false;
+                AudioManager.play('jump');
+            }
+            playerVelocity.y -= 30.0 * delta;
+            playerGroup.position.y += playerVelocity.y * delta;
+
+            if (playerGroup.position.y <= 0) {
+                playerGroup.position.y = 0;
+                playerVelocity.y = 0;
+                isGrounded = true;
+            }
+
+            const nextX = playerGroup.position.x + playerVelocity.x * delta;
+            const nextZ = playerGroup.position.z + playerVelocity.z * delta;
+
+            if (!LevelManager.checkCollision(nextX, playerGroup.position.z)) playerGroup.position.x = nextX;
+            if (!LevelManager.checkCollision(playerGroup.position.x, nextZ)) playerGroup.position.z = nextZ;
+
+            const speedH = Math.hypot(playerVelocity.x, playerVelocity.z);
+            if (speedH > 1.0 && isGrounded) {
+                walkCycleTime += (gameState.isSprinting ? 16 : 9) * delta;
+                playerGroup.userData.legL.rotation.x = Math.sin(walkCycleTime) * 0.7;
+                playerGroup.userData.legR.rotation.x = -Math.sin(walkCycleTime) * 0.7;
+                playerGroup.userData.armL.rotation.x = -Math.sin(walkCycleTime) * 0.6;
+                playerGroup.userData.armR.rotation.x = Math.sin(walkCycleTime) * 0.6;
+                if (Math.sin(walkCycleTime) > 0.85) AudioManager.play('step');
+            } else {
+                playerGroup.userData.legL.rotation.x = 0;
+                playerGroup.userData.legR.rotation.x = 0;
+                playerGroup.userData.armL.rotation.x = 0;
+                playerGroup.userData.armR.rotation.x = 0;
+            }
+
+            // Vista Panorámica Alejada sin mira sobre el personaje
+            if (gameState.isThirdPerson) {
+                const camHeight = 5.6 + Math.sin(cameraPitch) * 5.2;
+                const shoulderOffsetX = Math.cos(cameraYaw) * 1.5;
+                const shoulderOffsetZ = -Math.sin(cameraYaw) * 1.5;
+
+                camera.position.set(
+                    playerGroup.position.x + Math.sin(cameraYaw) * cameraDistance + shoulderOffsetX,
+                    playerGroup.position.y + camHeight,
+                    playerGroup.position.z + Math.cos(cameraYaw) * cameraDistance + shoulderOffsetZ
+                );
+                camera.lookAt(
+                    playerGroup.position.x + shoulderOffsetX * 0.4,
+                    playerGroup.position.y + 2.5,
+                    playerGroup.position.z + shoulderOffsetZ * 0.4
+                );
+            } else {
+                camera.position.set(playerGroup.position.x, playerGroup.position.y + 4.2, playerGroup.position.z);
+                const target = new THREE.Vector3(
+                    camera.position.x - Math.sin(cameraYaw) * Math.cos(cameraPitch),
+                    camera.position.y + Math.sin(cameraPitch),
+                    camera.position.z - Math.cos(cameraYaw) * Math.cos(cameraPitch)
+                );
+                camera.lookAt(target);
+            }
+        }
+
+        function checkDoorCollisions() {
+            const reachDist = 14.0;
+            if (doorTruthGroup.visible && playerGroup.position.distanceTo(doorTruthGroup.position) < reachDist) {
+                onDoorReached(true, doorTruthGroup);
+            }
+            if (doorHallucinationGroup.visible && playerGroup.position.distanceTo(doorHallucinationGroup.position) < reachDist) {
+                onDoorReached(false, doorHallucinationGroup);
+            }
+        }
+
+        function updateCollectibles(delta) {
+            const time = clock.getElapsedTime();
+            LevelManager.collectibles.forEach(item => {
+                if (item.active) {
+                    item.mesh.rotation.y += 1.8 * delta;
+                    item.mesh.position.y = item.baseY + Math.sin(time * 3.5) * 0.4;
+                    if (playerGroup.position.distanceTo(item.mesh.position) < 3.2) {
+                        item.active = false;
+                        if (item.mesh.parent) item.mesh.parent.remove(item.mesh);
+                        AudioManager.play('collect');
+                        gameState.score += 10;
+                        gameState.collectedCount++;
+                        if (gameState.collectedCount % 3 === 0) {
+                            gameState.inventory.emp++;
+                            updateInventoryHUD();
+                            showHUDNotification("¡FRAGMENTOS COMPLETADOS: +1 EMP!");
+                        }
+                        updateHUD();
+                    }
+                }
+            });
+        }
+
+        function updateEnemies(delta) {
+            if (!gameState.isChased) return;
+
+            const isFrozen = Date.now() < gameState.enemyFrozenUntil;
+            const targetPos = gameState.decoyPosition ? gameState.decoyPosition : playerGroup.position;
+            const currentLevel = LevelManager.getCurrentLevel();
+            const time = clock.getElapsedTime();
+
+            // Nivel 1: Mona China (Yandere / Six Seven)
+            if (currentLevel.id === 1 && monaChinaEntity && monaChinaEntity.visible) {
+                if (!isFrozen) {
+                    currentLevel.updateEnemy(monaChinaEntity, targetPos, delta);
+                    const dist = monaChinaEntity.position.distanceTo(playerGroup.position);
+                    if (dist < 25) AudioManager.play('heartbeat');
+                    if (dist < 4.2) onPlayerAttacked();
+                } else {
+                    monaChinaEntity.userData.stasis.material.opacity = 0.8;
+                }
+            }
+            // Nivel 2: Animatrónicos FNAF
+            else if (currentLevel.id === 2 && gameState.fnafModeActive) {
+                if (!isFrozen && !gameState.securityDoorClosed) {
+                    currentLevel.updateAnimatronics(freddyEntity, bonnieEntity, targetPos, delta, time);
+                    const distF = freddyEntity.position.distanceTo(playerGroup.position);
+                    const distB = bonnieEntity.position.distanceTo(playerGroup.position);
+                    if (distF < 25 || distB < 25) AudioManager.play('heartbeat');
+                    if (distF < 4.5 || distB < 4.5) onPlayerAttacked();
+                }
+            }
+            // Nivel 3: Kuudere Slenderman Weeping Angel
+            else if (currentLevel.id === 3 && monaChinaEntity && monaChinaEntity.visible) {
+                if (!isFrozen) {
+                    currentLevel.updateKuudereAI(monaChinaEntity, playerGroup, camera, delta);
+                    const dist = monaChinaEntity.position.distanceTo(playerGroup.position);
+                    if (dist < 25) AudioManager.play('heartbeat');
+                    if (dist < 4.2) onPlayerAttacked();
+                }
+            }
+            // Niveles 4, 5, 6: Entidades IA de los nuevos niveles
+            else if (monaChinaEntity && monaChinaEntity.visible) {
+                if (!isFrozen) {
+                    if (currentLevel.updateEnemy) {
+                        currentLevel.updateEnemy(monaChinaEntity, targetPos, delta);
+                    }
+                    const dist = monaChinaEntity.position.distanceTo(playerGroup.position);
+                    if (dist < 25) AudioManager.play('heartbeat');
+                    if (dist < 4.2) onPlayerAttacked();
+                } else {
+                    monaChinaEntity.userData.stasis.material.opacity = 0.8;
+                }
+            }
+        }
+
+        function updateCompass() {
+            const blipTruth = document.getElementById('blip-truth');
+            const blipHallucination = document.getElementById('blip-hallucination');
+            const blipSecurity = document.getElementById('blip-security');
+            const blipChaser = document.getElementById('blip-chaser');
+            const barWidth = 300;
+
+            function calculateBlip(targetPos) {
+                const diff = targetPos.clone().sub(playerGroup.position);
+                let angle = Math.atan2(diff.x, diff.z) - cameraYaw;
+                while (angle > Math.PI) angle -= 2 * Math.PI;
+                while (angle < -Math.PI) angle += 2 * Math.PI;
+                const norm = angle / (Math.PI / 2);
+                const left = (barWidth / 2) - (norm * (barWidth / 2));
+                return Math.max(8, Math.min(barWidth - 8, left));
+            }
+
+            if (doorTruthGroup && doorTruthGroup.visible) blipTruth.style.left = `${calculateBlip(doorTruthGroup.position)}px`;
+            if (doorHallucinationGroup && doorHallucinationGroup.visible) blipHallucination.style.left = `${calculateBlip(doorHallucinationGroup.position)}px`;
+            if (gameState.fnafModeActive) {
+                blipSecurity.style.left = `${calculateBlip(new THREE.Vector3(Level2_FNAF.securityOffice.x, 0, Level2_FNAF.securityOffice.z))}px`;
+            }
+
+            let threat = null;
+            if (monaChinaEntity && monaChinaEntity.visible) threat = monaChinaEntity;
+            else if (freddyEntity && freddyEntity.visible) threat = freddyEntity;
+            else if (bonnieEntity && bonnieEntity.visible) threat = bonnieEntity;
+
+            if (threat && gameState.isChased) {
+                blipChaser.style.left = `${calculateBlip(threat.position)}px`;
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', init3D);
+    </script>
+</body>
+</html>

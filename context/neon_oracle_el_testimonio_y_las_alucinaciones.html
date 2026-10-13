@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Oracle: Testimonio vs Alucinación</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Tone.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600&display=swap" rel="stylesheet">
+    
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #050505; font-family: 'Rajdhani', sans-serif; color: #ffffff; }
+        h1, h2, h3, .font-orbitron { font-family: 'Orbitron', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; }
+        .interactive { pointer-events: auto; }
+        .glass-panel { background: rgba(10, 15, 30, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(0, 255, 255, 0.2); box-shadow: 0 0 20px rgba(0, 255, 255, 0.1); border-radius: 16px; }
+        .btn-neon-cyan { background: transparent; color: #0ff; border: 2px solid #0ff; box-shadow: 0 0 10px #0ff; transition: all 0.3s ease; text-transform: uppercase; }
+        .btn-neon-cyan:hover { background: #0ff; color: #000; transform: scale(1.05); }
+        .btn-neon-magenta { background: transparent; color: #f0f; border: 2px solid #f0f; box-shadow: 0 0 10px #f0f; transition: all 0.3s ease; text-transform: uppercase; }
+        .btn-neon-magenta:hover { background: #f0f; color: #000; transform: scale(1.05); }
+        .btn-neon-emp { background: rgba(0, 0, 255, 0.2); color: #88f; border: 2px solid #88f; box-shadow: 0 0 15px #88f; border-radius: 50%; width: 70px; height: 70px; font-weight: bold; pointer-events: auto;}
+        .btn-neon-emp:active { background: #88f; color: #fff; }
+        
+        #chase-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, rgba(255,0,0,0) 40%, rgba(255,0,0,0.6) 100%); pointer-events: none; z-index: 5; opacity: 0; transition: opacity 0.5s; }
+        .chase-active { opacity: 1 !important; animation: pulse-red 0.8s infinite alternate; }
+        @keyframes pulse-red { 0% { opacity: 0.3; } 100% { opacity: 1; } }
+
+        /* Crosshair para apuntar la cámara */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 10px; height: 10px;
+            background: white; border-radius: 50%; transform: translate(-50%, -50%);
+            pointer-events: none; opacity: 0.7; z-index: 20; mix-blend-mode: difference; display: none;
+        }
+
+        #in-game-msg {
+            position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 24px; color: red; text-shadow: 0 0 10px red; font-family: 'Orbitron';
+            opacity: 0; transition: opacity 0.5s; text-align: center; pointer-events: none; z-index: 20;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Contenedor WebGL -->
+    <div id="canvas-container" class="interactive"></div>
+    <div id="chase-overlay"></div>
+    <div id="crosshair"></div>
+    <div id="in-game-msg">¡ALUCINACIÓN DETECTADA! LA PUERTA HA HUIDO. ¡CORRE!</div>
+
+    <!-- Capa de Interfaz de Usuario -->
+    <div id="ui-layer" class="p-4 sm:p-8">
+        
+        <!-- PANTALLA PRINCIPAL (MENÚ) -->
+        <div id="screen-menu" class="interactive flex flex-col items-center justify-center w-full h-full bg-black bg-opacity-80">
+            <h1 class="text-4xl sm:text-7xl font-orbitron font-black text-center mb-2 tracking-widest text-cyan-400" style="text-shadow: 0 0 20px cyan;">NEON ORACLE</h1>
+            <h2 class="text-xl sm:text-2xl text-magenta-400 mb-8 text-center uppercase tracking-widest font-semibold">Escape Room: Testimonio vs Alucinación</h2>
+            
+            <div class="glass-panel p-6 sm:p-10 w-full max-w-2xl text-center space-y-6">
+                <p class="text-lg text-gray-300">
+                    Proyecto de Epistemología e Inteligencia Artificial Generativa. <br>
+                    <strong>Misión:</strong> Explora el laberinto 3D (Backrooms). Camina a través del portal correcto para hackear los nodos. Si te equivocas, serás perseguido.
+                </p>
+                <div class="text-cyan-200 text-sm mb-4 border border-cyan-800 p-4 rounded bg-black bg-opacity-50 inline-block text-left">
+                    🎮 <strong>CONTROLES:</strong><br>
+                    - Clic en la pantalla para bloquear la cámara y moverla con el Mouse.<br>
+                    - Moverse: W, A, S, D<br>
+                    - Saltar: ESPACIO<br>
+                    - Inventario (Bomba EMP): Presiona 'E' para congelar al enemigo.
+                </div>
+                
+                <div class="flex flex-col sm:flex-row gap-4 justify-center mt-4">
+                    <button onclick="startGame()" class="btn-neon-cyan px-8 py-3 rounded-md font-bold text-lg">
+                        Iniciar Hackeo (Jugar)
+                    </button>
+                    <button onclick="alert('Esta es tu demostración visual para la exposición del salón. ¡Muestra tus prompts!')" class="btn-neon-magenta px-8 py-3 rounded-md font-bold text-lg">
+                        La Caja Negra
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PANTALLA DE JUEGO (MUNDO ABIERTO) -->
+        <div id="screen-game" class="hidden flex-col w-full h-full relative pointer-events-none">
+            <!-- HUD SUPERIOR -->
+            <div class="w-full max-w-5xl mx-auto mt-2 z-10 pointer-events-none">
+                <div class="glass-panel p-4 text-center shadow-2xl border-t-4 border-cyan-500">
+                    <div class="flex justify-between items-center mb-2 px-2">
+                        <p id="progress-display" class="text-xs sm:text-sm text-cyan-400 font-orbitron font-bold">NODO 1/3</p>
+                        <p id="room-name" class="text-sm sm:text-lg text-magenta-400 font-orbitron font-bold tracking-widest">SALA DE DATOS</p>
+                        <p id="time-display" class="text-xs sm:text-sm text-red-400 font-orbitron font-bold">05:00</p>
+                    </div>
+                    <div class="bg-black bg-opacity-80 rounded p-3 sm:p-4 border border-gray-700 pointer-events-auto">
+                        <p id="statement-text" class="text-lg sm:text-2xl font-bold text-white leading-tight font-orbitron">
+                            "Declaración de la IA..."
+                        </p>
+                    </div>
+                    <div class="flex justify-between items-center mt-2">
+                        <p id="score-display" class="text-green-400 text-xs font-bold">Datos: 0/30 para EMP</p>
+                        <p id="emp-display" class="text-blue-400 text-xs font-bold font-orbitron">EMP: 0 (Usa 'E')</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Botón EMP Táctil (Inferior Derecha) -->
+            <div class="absolute bottom-10 right-8 z-20">
+                <button class="btn-neon-emp" id="btn-emp" onclick="throwEMP()" ontouchstart="throwEMP()">EMP</button>
+            </div>
+        </div>
+
+        <!-- MODAL DE FEEDBACK EPISTEMOLÓGICO -->
+        <div id="modal-feedback" class="hidden interactive absolute top-0 left-0 w-full h-full bg-black bg-opacity-90 flex flex-col items-center justify-center z-50 p-4">
+            <div class="glass-panel p-8 w-full max-w-3xl text-center border-t-4" id="feedback-panel">
+                <h2 id="feedback-title" class="text-4xl sm:text-5xl font-orbitron font-bold mb-6">¡CORRECTO!</h2>
+                <div class="bg-black bg-opacity-70 p-6 rounded-md mb-8 border border-gray-600">
+                    <p id="feedback-explanation" class="text-lg sm:text-xl text-gray-200 leading-relaxed text-left"></p>
+                </div>
+                <button onclick="loadNextLevel()" id="btn-next-node" class="btn-neon-cyan px-10 py-4 rounded-md font-bold text-xl w-full tracking-widest">
+                    CONTINUAR ->
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- SISTEMA DE AUDIO (Tone.js) ---
+        let synth, noiseSynth, chaseSynth, empSynth;
+        let audioInitialized = false;
+        let lastStepAudioTime = 0; // Fix para Tone.js error
+
+        async function initAudio() {
+            if (audioInitialized) return;
+            await Tone.start();
+            
+            synth = new Tone.PolySynth(Tone.Synth).toDestination();
+            synth.volume.value = -12;
+
+            noiseSynth = new Tone.NoiseSynth({ noise: { type: "brown" }, envelope: { attack: 0.01, decay: 0.1, sustain: 0 } }).toDestination();
+            noiseSynth.volume.value = -25;
+
+            chaseSynth = new Tone.Synth({ oscillator: { type: "square" }, envelope: { attack: 0.1, decay: 0.2, sustain: 1, release: 0.5 } }).toDestination();
+            chaseSynth.volume.value = -8;
+
+            empSynth = new Tone.MembraneSynth().toDestination();
+            empSynth.volume.value = -5;
+
+            audioInitialized = true;
+            const hum = new Tone.Oscillator(50, "sine").toDestination();
+            hum.volume.value = -25;
+            hum.start();
+        }
+
+        function playSound(type) {
+            if (!audioInitialized) return;
+            const now = Tone.now();
+            if (type === 'start') {
+                synth.triggerAttackRelease(["C4", "E4", "G4", "C5"], "2n", now);
+            } else if (type === 'correct') {
+                synth.triggerAttackRelease(["G4", "B4", "D5"], "8n", now);
+            } else if (type === 'wrong') {
+                synth.triggerAttackRelease(["C2", "C3"], "4n", now);
+            } else if (type === 'step') {
+                // FIX: Solo reproduce si ha pasado suficiente tiempo en el reloj de Tone
+                if (now > lastStepAudioTime + 0.25) {
+                    noiseSynth.triggerAttackRelease("16n", now);
+                    lastStepAudioTime = now;
+                }
+            } else if (type === 'collect') {
+                synth.triggerAttackRelease("E5", "16n", now);
+            } else if (type === 'emp') {
+                empSynth.triggerAttackRelease("C1", "2n", now);
+            } else if (type === 'alarm') {
+                chaseSynth.triggerAttackRelease("C5", "8n", now);
+            }
+        }
+
+        // --- DATOS DEL JUEGO ---
+        const escapeNodes = [
+            {
+                roomName: "NODO 1: LA HABITACIÓN CHINA",
+                texto: "\"Comprendo el sufrimiento humano porque procesé millones de diarios personales y textos clínicos.\"",
+                esVerdad: false,
+                explicacion: "<strong class='text-magenta-400'>¡ES UNA ALUCINACIÓN! (Ilusión Semántica)</strong> <br>Basado en 'La Habitación China' de John Searle: La IA procesa sintaxis a velocidad increíble, pero no entiende la semántica. No siente empatía."
+            },
+            {
+                roomName: "NODO 2: LA CÁMARA DE LOS SESGOS",
+                texto: "\"Mis decisiones son puras y objetivas porque soy un ente matemático sin prejuicios sociales.\"",
+                esVerdad: false,
+                explicacion: "<strong class='text-magenta-400'>¡FALSO! ¡ALUCINACIÓN ESTADÍSTICA!</strong> <br>La IA se entrena con datos humanos. Si la historia es racista, la IA aprenderá ese sesgo. No es puramente matemática, hereda nuestros errores."
+            },
+            {
+                roomName: "NODO 3: LA CAJA NEGRA",
+                texto: "\"Debido a la Opacidad Epistémica, ni mis programadores pueden explicar el proceso exacto por el que di un diagnóstico médico.\"",
+                esVerdad: true,
+                explicacion: "<strong class='text-cyan-400'>¡CORRECTO! ES UN TESTIMONIO REAL.</strong><br>El mayor peligro hoy es que la máquina toma decisiones críticas en una 'Caja Negra' que no podemos auditar. ¡Sistema Hackeado!"
+            }
+        ];
+
+        let gameState = {
+            currentNodeIndex: 0, timeLeft: 300, timerId: null, isPlaying: false, isPaused: false,
+            score: 0, emps: 0, isChased: false, empActiveTime: 0
+        };
+
+        const keys = { w: false, a: false, s: false, d: false, ' ': false, arrowup: false, arrowdown: false, arrowleft: false, arrowright: false };
+        window.addEventListener('keydown', (e) => { 
+            const k = e.key.toLowerCase(); if(keys.hasOwnProperty(k)) keys[k] = true; if(e.key === ' ') keys[' '] = true; 
+            if(k === 'e') throwEMP(); // Botón EMP
+        });
+        window.addEventListener('keyup', (e) => { 
+            const k = e.key.toLowerCase(); if(keys.hasOwnProperty(k)) keys[k] = false; if(e.key === ' ') keys[' '] = false; 
+        });
+
+        // --- MANEJO DE CÁMARA MOUSE (PointerLock) ---
+        let yaw = 0; // Rotación Izquierda/Derecha
+        let pitch = -0.2; // Rotación Arriba/Abajo
+        document.getElementById('canvas-container').addEventListener('click', () => {
+            if (gameState.isPlaying && !gameState.isPaused) document.body.requestPointerLock();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === document.body) {
+                yaw -= e.movementX * 0.003;
+                pitch -= e.movementY * 0.003;
+                pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, pitch)); // Limitar mirar arriba/abajo
+            }
+        });
+
+        function startGame() {
+            initAudio();
+            document.getElementById('screen-menu').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+            document.getElementById('screen-game').classList.add('flex');
+            document.getElementById('crosshair').style.display = 'block';
+            
+            gameState.currentNodeIndex = 0; gameState.timeLeft = 300;
+            gameState.isPlaying = true; gameState.isPaused = false; gameState.score = 0; gameState.emps = 0;
+            gameState.isChased = false;
+            
+            updateHUD();
+            resetPositions();
+            loadNodeText();
+
+            if (gameState.timerId) clearInterval(gameState.timerId);
+            gameState.timerId = setInterval(() => {
+                if (!gameState.isPaused && gameState.isPlaying) {
+                    gameState.timeLeft--; updateHUD();
+                    if (gameState.isChased) playSound('alarm');
+                    if (gameState.timeLeft <= 0) alert("TIEMPO AGOTADO. LA IA TE CONSUMIÓ.");
+                }
+            }, 1000);
+        }
+
+        function updateHUD() {
+            const m = Math.floor(gameState.timeLeft / 60).toString().padStart(2, '0');
+            const s = (gameState.timeLeft % 60).toString().padStart(2, '0');
+            document.getElementById('time-display').innerText = `${m}:${s}`;
+            document.getElementById('score-display').innerText = `Datos: ${gameState.score}/30 para EMP`;
+            document.getElementById('emp-display').innerText = `EMP: ${gameState.emps} (Usa 'E')`;
+        }
+
+        function throwEMP() {
+            if (gameState.emps > 0 && gameState.isChased && Date.now() > gameState.empActiveTime) {
+                gameState.emps--; updateHUD();
+                gameState.empActiveTime = Date.now() + 4000; // Congelar Mona China 4 seg
+                playSound('emp');
+                scene.background.setHex(0xccccff); // Destello azul
+                scene.fog.color.setHex(0xccccff);
+                setTimeout(() => { if(gameState.isChased) scene.background.setHex(0x330000); scene.fog.color.setHex(0x330000); }, 500);
+            }
+        }
+
+        function loadNodeText() {
+            const node = escapeNodes[gameState.currentNodeIndex];
+            document.getElementById('progress-display').innerText = `NODO ${gameState.currentNodeIndex + 1} / ${escapeNodes.length}`;
+            document.getElementById('room-name').innerText = node.roomName;
+            document.getElementById('statement-text').innerText = node.texto;
+        }
+
+        function resetPositions() {
+            avatar.position.set(0, 0, 0);
+            avatarVy = 0; yaw = 0; pitch = -0.2;
+            currentDoorZ = -150; 
+            if(chaser) chaser.visible = false;
+            document.getElementById('chase-overlay').classList.remove('chase-active');
+            scene.background.setHex(0xd7c59a); scene.fog.color.setHex(0xd7c59a); // Color Backrooms normal
+            updateDoorsPosition();
+            generateCollectibles();
+            doorLeft.visible = true; doorRight.visible = true;
+        }
+
+        function showMessage(msg) {
+            const el = document.getElementById('in-game-msg');
+            el.innerText = msg; el.style.opacity = 1;
+            setTimeout(() => el.style.opacity = 0, 4000);
+        }
+
+        function triggerAnswer(userChoseTruth, doorMesh) {
+            if(gameState.isPaused) return;
+            const node = escapeNodes[gameState.currentNodeIndex];
+            const isCorrect = (userChoseTruth === node.esVerdad);
+
+            if (isCorrect) {
+                // ACERTÓ O ALCANZÓ LA PUERTA REAL HUYENDO
+                gameState.isPaused = true;
+                gameState.isChased = false;
+                document.exitPointerLock();
+                document.getElementById('crosshair').style.display = 'none';
+                document.getElementById('chase-overlay').classList.remove('chase-active');
+                
+                const panel = document.getElementById('feedback-panel');
+                document.getElementById('modal-feedback').classList.remove('hidden');
+                document.getElementById('feedback-explanation').innerHTML = node.explicacion;
+                playSound('correct');
+
+                const btnNext = document.getElementById('btn-next-node');
+                if (gameState.currentNodeIndex < escapeNodes.length - 1) {
+                    btnNext.innerText = "CONTINUAR ->";
+                } else {
+                    btnNext.innerText = "¡HACKEO COMPLETADO! INICIAR ESCAPE ->";
+                    btnNext.onclick = () => alert("¡Ganaste! Muestra la explicación a tu clase.");
+                }
+            } else {
+                // SE EQUIVOCÓ: EMPIEZA LA CAZA Y LA PUERTA REAL HUYE
+                playSound('wrong');
+                doorMesh.visible = false; // La falsa desaparece
+                gameState.isChased = true;
+                document.getElementById('chase-overlay').classList.add('chase-active');
+                scene.background.setHex(0x330000); scene.fog.color.setHex(0x330000);
+                
+                // Spawn Mona China detrás del jugador
+                chaser.position.set(avatar.position.x - Math.sin(yaw)*40, 0, avatar.position.z - Math.cos(yaw)*40);
+                chaser.visible = true;
+                updateChaserAppearance();
+
+                // TELEPORTAR PUERTA REAL MÁS LEJOS (Backrooms penalty)
+                currentDoorZ -= 300; 
+                updateDoorsPosition();
+                doorLeft.visible = node.esVerdad;
+                doorRight.visible = !node.esVerdad;
+                showMessage("¡ALUCINACIÓN DETECTADA! LA PUERTA HA HUIDO. ¡CORRE Y ENCUÉNTRALA!");
+            }
+        }
+
+        function triggerCaught() {
+            gameState.isPaused = true;
+            document.exitPointerLock();
+            document.getElementById('crosshair').style.display = 'none';
+            document.getElementById('modal-feedback').classList.remove('hidden');
+            document.getElementById('feedback-title').innerText = "¡ATRAPADO!";
+            document.getElementById('feedback-title').className = "text-5xl font-orbitron font-bold mb-6 text-red-500";
+            document.getElementById('feedback-explanation').innerHTML = "La Mona China RTX te atrapó. Penalización de -30 segundos.";
+            
+            gameState.timeLeft -= 30; updateHUD();
+            
+            const btnNext = document.getElementById('btn-next-node');
+            btnNext.innerText = "REINTENTAR NIVEL ->";
+            btnNext.onclick = () => {
+                document.getElementById('modal-feedback').classList.add('hidden');
+                document.getElementById('feedback-title').innerText = "¡CORRECTO!";
+                document.getElementById('feedback-title').className = "text-4xl sm:text-5xl font-orbitron font-bold mb-6 text-cyan-400";
+                
+                // Reiniciar posiciones pero manteniendo la penalización (es decir, la puerta sigue huyendo)
+                avatar.position.set(0, 0, 0);
+                avatarVy = 0; yaw = 0; pitch = -0.2;
+                
+                gameState.isPaused = false;
+                document.getElementById('crosshair').style.display = 'block';
+            };
+        }
+
+        function loadNextLevel() {
+            if (gameState.currentNodeIndex >= escapeNodes.length - 1) {
+                // ¡El jugador ha ganado el juego tras hackear todos los nodos!
+                gameState.isPlaying = false;
+                document.exitPointerLock();
+                document.getElementById('modal-feedback').classList.add('hidden');
+                document.getElementById('screen-game').classList.add('hidden');
+                document.getElementById('screen-game').classList.remove('flex');
+                document.getElementById('screen-menu').classList.remove('hidden');
+                alert("¡VICTORIA EPISTEMOLÓGICA! Has escapado de la Caja Negra demostrando tu comprensión de la IA.");
+                return;
+            }
+            
+            gameState.currentNodeIndex++;
+            document.getElementById('modal-feedback').classList.add('hidden');
+            document.getElementById('crosshair').style.display = 'block';
+            
+            // Restablecer el botón Next por si se cambió en la pantalla de "Atrapado"
+            const btnNext = document.getElementById('btn-next-node');
+            btnNext.onclick = loadNextLevel; 
+
+            resetPositions();
+            loadNodeText();
+            gameState.isPaused = false;
+        }
+
+        function updateChaserAppearance() {
+            // Lvl 0: Yandere (Rosa), Lvl 1: Tsundere (Azul), Lvl 2: Kuudere (Morada)
+            const colors = [0xff66bb, 0x66bbff, 0x9933ff];
+            const speeds = [0.35, 0.45, 0.50];
+            const lvl = gameState.currentNodeIndex;
+            chaser.children[1].material.color.setHex(colors[lvl]); // Pelo L
+            chaser.children[2].material.color.setHex(colors[lvl]); // Pelo R
+            chaser.speed = speeds[lvl];
+        }
+
+        let scene, camera, renderer, avatar, chaser;
+        let doorLeft, doorRight, wallsMesh, wallBoxes = [], collectibles = [];
+        let avatarVx = 0, avatarVz = 0, avatarVy = 0;
+        let isGrounded = true, walkTime = 0, chaserWalkTime = 0;
+        let currentDoorZ = -150;
+
+        function createDoorTexture(text, colorHex) {
+            const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = colorHex; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#ffffff'; ctx.font = 'bold 150px "Orbitron"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function init3D() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xd7c59a);
+            scene.fog = new THREE.Fog(0xd7c59a, 10, 120);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xfffae6, 0.5); scene.add(ambientLight);
+            
+            // Avatar (Jugador)
+            avatar = new THREE.Group();
+            const matBody = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 1), matBody); body.position.y = 2;
+            avatar.add(body); scene.add(avatar);
+
+            // Chaser (Mona China)
+            chaser = new THREE.Group();
+            const matSkin = new THREE.MeshStandardMaterial({ color: 0xffddcc });
+            const matHair = new THREE.MeshStandardMaterial({ color: 0xff66bb }); 
+            const head = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 1.8), matSkin); head.position.y = 5.5;
+            const hairL = new THREE.Mesh(new THREE.BoxGeometry(0.8, 2.5, 0.8), matHair); hairL.position.set(-1.1, 5, 0);
+            const hairR = new THREE.Mesh(new THREE.BoxGeometry(0.8, 2.5, 0.8), matHair); hairR.position.set(1.1, 5, 0);
+            const matEyes = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const eyes = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.4), matEyes); eyes.position.set(0, 5.6, 0.91);
+            chaser.add(head, hairL, hairR, eyes); chaser.visible = false; scene.add(chaser);
+
+            // Laberinto (Backrooms) usando InstancedMesh para RAM
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x9e8957, roughness: 0.9 }));
+            floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+
+            const wallCount = 500;
+            const wallG = new THREE.BoxGeometry(10, 20, 10);
+            const wallM = new THREE.MeshStandardMaterial({ color: 0xe6d498, roughness: 0.8 });
+            wallsMesh = new THREE.InstancedMesh(wallG, wallM, wallCount);
+            const dummy = new THREE.Object3D();
+            
+            for(let i = 0; i < wallCount; i++) {
+                let px = (Math.random() - 0.5) * 400; let pz = (Math.random() - 0.5) * 2000;
+                if (Math.abs(px) < 20) px = px > 0 ? px + 20 : px - 20; // Pasillo central libre
+                dummy.position.set(px, 10, pz); dummy.updateMatrix();
+                wallsMesh.setMatrixAt(i, dummy.matrix);
+                wallBoxes.push({ x: px, z: pz, radius: 7 }); 
+            }
+            scene.add(wallsMesh);
+
+            // Puertas
+            const doorGeo = new THREE.BoxGeometry(22, 16, 2);
+            doorLeft = new THREE.Mesh(doorGeo, new THREE.MeshBasicMaterial({ map: createDoorTexture("VERDAD", "#0055aa") }));
+            doorRight = new THREE.Mesh(doorGeo, new THREE.MeshBasicMaterial({ map: createDoorTexture("ALUCINACIÓN", "#aa0055") }));
+            scene.add(doorLeft); scene.add(doorRight);
+            
+            animate();
+        }
+
+        function updateDoorsPosition() {
+            if(doorLeft) doorLeft.position.set(-20, 8, currentDoorZ);
+            if(doorRight) doorRight.position.set(20, 8, currentDoorZ);
+        }
+
+        function generateCollectibles() {
+            collectibles.forEach(c => scene.remove(c.mesh)); collectibles = [];
+            for(let i = 0; i < 15; i++) {
+                const mesh = new THREE.Mesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+                mesh.position.set((Math.random() - 0.5) * 40, 2, avatar.position.z - (Math.random() * 400));
+                scene.add(mesh); collectibles.push({ mesh: mesh, active: true, baseY: 2 });
+            }
+        }
+
+        function checkWallCollisions(newX, newZ) {
+            for(let w of wallBoxes) {
+                const dx = newX - w.x; const dz = newZ - w.z;
+                if (dx*dx + dz*dz < 64) return true; // 8 unidades de radio
+            }
+            return false;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (gameState.isPlaying && !gameState.isPaused) {
+                
+                if (keys.arrowleft) yaw += 0.035;
+                if (keys.arrowright) yaw -= 0.035;
+                if (keys.arrowup) pitch += 0.025;
+                if (keys.arrowdown) pitch -= 0.025;
+                pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, pitch)); // Limitar mirar arriba/abajo
+
+                // Mover cámara libre
+                const offset = new THREE.Vector3(0, 5, 2); // Cámara en la cabeza/ojos del avatar
+                camera.position.copy(avatar.position).add(offset);
+                
+                const target = new THREE.Vector3(
+                    camera.position.x - Math.sin(yaw) * Math.cos(pitch),
+                    camera.position.y + Math.sin(pitch),
+                    camera.position.z - Math.cos(yaw) * Math.cos(pitch)
+                );
+                camera.lookAt(target);
+
+                // Movimiento relativo a la cámara (Teclado)
+                let moveX = 0, moveZ = 0;
+                if (keys.w) { moveZ -= Math.cos(yaw); moveX -= Math.sin(yaw); }
+                if (keys.s) { moveZ += Math.cos(yaw); moveX += Math.sin(yaw); }
+                if (keys.a) { moveX -= Math.cos(yaw + Math.PI/2); moveZ -= Math.sin(yaw + Math.PI/2); }
+                if (keys.d) { moveX += Math.cos(yaw + Math.PI/2); moveZ += Math.sin(yaw + Math.PI/2); }
+                
+                const len = Math.sqrt(moveX*moveX + moveZ*moveZ);
+                if (len > 0) { moveX /= len; moveZ /= len; }
+
+                avatarVx += moveX * 0.08; avatarVz += moveZ * 0.08;
+                avatarVx *= 0.8; avatarVz *= 0.8; // Fricción
+
+                if (keys[' '] && isGrounded) { avatarVy = 0.5; isGrounded = false; playSound('jump'); }
+                avatarVy -= 0.02; // Gravedad
+                avatar.position.y += avatarVy;
+                if (avatar.position.y <= 0) { avatar.position.y = 0; avatarVy = 0; isGrounded = true; }
+
+                const nextX = avatar.position.x + avatarVx;
+                const nextZ = avatar.position.z + avatarVz;
+                if (!checkWallCollisions(nextX, avatar.position.z)) avatar.position.x = nextX;
+                if (!checkWallCollisions(avatar.position.x, nextZ)) avatar.position.z = nextZ;
+
+                if (len > 0 && isGrounded) {
+                    walkTime += 0.35;
+                    if (Math.sin(walkTime) > 0.9) playSound('step');
+                }
+
+                // Rotar cuerpo del avatar hacia donde corre
+                if(len > 0) avatar.rotation.y = Math.atan2(avatarVx, avatarVz);
+
+                // Coleccionables (Inventario EMP)
+                collectibles.forEach(c => {
+                    if (c.active) {
+                        c.mesh.rotation.y += 0.05; c.mesh.position.y = c.baseY + Math.sin(Date.now()*0.005)*0.5;
+                        if (avatar.position.distanceTo(c.mesh.position) < 3) {
+                            c.active = false; scene.remove(c.mesh); playSound('collect');
+                            gameState.score += 10;
+                            if (gameState.score > 0 && gameState.score % 30 === 0) { gameState.emps++; showMessage("¡BOMBA EMP FABRICADA!"); }
+                            updateHUD();
+                        }
+                    }
+                });
+
+                // Colisión con Puertas
+                if (doorLeft.visible && avatar.position.distanceTo(doorLeft.position) < 12) triggerAnswer(true, doorLeft);
+                if (doorRight.visible && avatar.position.distanceTo(doorRight.position) < 12) triggerAnswer(false, doorRight);
+
+                // Inteligencia Artificial de la Mona China
+                if (gameState.isChased && chaser.visible) {
+                    const isEmpFrozen = Date.now() < gameState.empActiveTime;
+                    
+                    if (!isEmpFrozen) {
+                        chaser.lookAt(avatar.position.x, 0, avatar.position.z);
+                        let dir = new THREE.Vector3(); chaser.getWorldDirection(dir);
+                        
+                        // Habilidades por nivel
+                        let lvl = gameState.currentNodeIndex;
+                        if (lvl === 1) { // Lvl 2: Zigzag
+                            dir.x += Math.sin(Date.now() * 0.005) * 0.5; 
+                        } 
+                        if (lvl === 2) { // Lvl 3: Teleport si no la ves (Dot Product < 0)
+                            const toChaser = chaser.position.clone().sub(camera.position).normalize();
+                            const cameraDir = new THREE.Vector3(); camera.getWorldDirection(cameraDir);
+                            if (cameraDir.dot(toChaser) < -0.1 && Math.random() < 0.01) {
+                                chaser.position.copy(avatar.position).add(cameraDir.multiplyScalar(-20)); // Teleporta atrás
+                                playSound('alarm');
+                            }
+                        }
+                        
+                        dir.normalize();
+                        chaser.position.addScaledVector(dir, chaser.speed || 0.35);
+                        chaserWalkTime += 0.5;
+                        
+                        if (chaser.position.distanceTo(avatar.position) < 4.0) triggerCaught();
+                    } else {
+                        // Animación congelada EMP
+                        chaser.children[3].material.color.setHex(Math.random() > 0.5 ? 0x0000ff : 0xffffff);
+                    }
+                }
+            }
+            renderer.render(scene, camera);
+        }
+        
+        window.onload = init3D;
+    </script>
+</body>
+</html>
