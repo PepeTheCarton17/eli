@@ -1,0 +1,12 @@
+{
+  "name": "neon-oracle",
+  "version": "1.0.0",
+  "description": "Neon Oracle: Testimonio vs Alucinacion — Escape Room Epistemológico 3D con Three.js. Juego web estatico; solo se necesita un navegador (los modelos van incrustados y las librerias se cargan por CDN). Este package.json solo anade un servidor local de conveniencia.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node serve.mjs",
+    "serve": "node serve.mjs"
+  },
+  "license": "ISC"
+}
