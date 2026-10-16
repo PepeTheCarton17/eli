@@ -34,8 +34,49 @@ window.Level1_Backrooms = {
     },
 
     // Generación de mapa y geometría con sombras RTX
-    buildMap(scene, registerWall) {
+    buildMap(scene, registerWall, registerObstacle) {
         const group = new THREE.Group();
+
+        // ================================================================
+        // MAPA ESTRUCTURADO: modelo glTF "The Backrooms" (Sketchfab)
+        // ================================================================
+        if (window.BackroomsMap && window.BackroomsMap.ready) {
+            const model = window.BackroomsMap.buildGroup(registerObstacle);
+            if (model) {
+                group.add(model);
+                const B = window.BackroomsMap.bounds;
+
+                // Puertas de respuesta: dos pasillos alcanzables de la pared
+                // norte del laberinto (el jugador debe recorrerlo para elegir).
+                const row = window.BackroomsMap.bestRowNear(2, 4);
+                const cells = (row != null) ? window.BackroomsMap.pickCellsInRow(row, [0.18, 0.82]) : null;
+                if (cells && cells.length === 2) {
+                    const t = window.BackroomsMap.worldOfCell(cells[0].ix, cells[0].iz);
+                    const hh = window.BackroomsMap.worldOfCell(cells[1].ix, cells[1].iz);
+                    this.doors.truth = { x: t.x, y: 0, z: t.z };
+                    this.doors.hallucination = { x: hh.x, y: 0, z: hh.z };
+                }
+                // La puerta superviviente reaparece al fondo de la sala.
+                this.doors.teleportTarget = { x: 0, y: 0, z: B.maxZ - 25 };
+                // Los coleccionables solo se generan dentro de la sala.
+                this.collectibleBounds = {
+                    minX: B.minX + 10, maxX: B.maxX - 10,
+                    minZ: B.minZ + 10, maxZ: B.maxZ - 10
+                };
+                this._usesModel = true;
+                scene.add(group);
+                return group;
+            }
+        }
+
+        // ================================================================
+        // MAPA PROCEDURAL CLÁSICO (fallback si el modelo no está disponible)
+        // ================================================================
+        this._usesModel = false;
+        this.collectibleBounds = null;
+        this.doors.truth = { x: -28, y: 0, z: -110 };
+        this.doors.hallucination = { x: 28, y: 0, z: -110 };
+        this.doors.teleportTarget = { x: -110, y: 0, z: 110 };
 
         // 1. Suelo de Moqueta Amarilla Húmeda PBR RTX
         const carpetCanvas = document.createElement('canvas');

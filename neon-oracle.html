@@ -27,6 +27,7 @@
     <script src="levels/level5_model_collapse.js"></script>
     <script src="levels/level6_testimonial_justice.js"></script>
     <script src="levels/levelManager.js"></script>
+    <script src="levels/backrooms_map.js"></script>
     <!-- Modelos GLB + soporte meshopt/webp -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_decoder.js"></script>
@@ -1226,8 +1227,10 @@
         const MODEL_SRC_H = { robot: 0.90, character: 1.756 };
         const MODEL_GAME_H = { robot: 4.8, character: 5.8 };
         const GIRL_FOLLOW_DIST = 3.0;   // distancia detrás del robot (punto de formación)
-        const GIRL_SIDE_DIST = 6.0;     // desplazamiento lateral (para no tapar la cámara en 3ª persona)
+        const GIRL_SIDE_DIST = 3.0;     // desplazamiento lateral (ni pegada ni lejos, pero sin tapar la cámara)
         const GIRL_CATCH_DIST = 3.2;    // a esta distancia te golpea (cuando te persigue)
+        const GIRL_RADIUS = 1.2;        // radio de colisión de la chica contra los muros
+        const GIRL_ESCAPE_DIST = 55;    // al matarte aparece a esta distancia (es más rápida que tú)
 
         let robotModel = null, girlModel = null;
         let robotMixer = null, girlMixer = null;
@@ -1314,7 +1317,7 @@
             girlActions = buildActionMap(gltf);
             girlState = setClip(girlMixer, girlActions, null, 'Idle', { fade: 0 });
             monaChinaEntity.visible = true;
-            monaChinaEntity.position.set(playerGroup.position.x, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
+            monaChinaEntity.position.set(playerGroup.position.x + GIRL_SIDE_DIST, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
             console.log('Chica cargada: ' + gltf.animations.length + ' animaciones (' + Object.keys(girlActions).join(', ') + ')');
         }
 
@@ -1344,6 +1347,40 @@
                 clamp: want === 'Death',
                 timeScale: ts
             });
+        }
+
+        // ¿La chica chocaría con un muro si estuviera en (x, z)?
+        function girlCollides(x, z) {
+            return LevelManager.checkCollision(x, z, GIRL_RADIUS);
+        }
+
+        // Desplaza a la chica resolviendo cada eje por separado, para que se
+        // deslice a lo largo de los muros en lugar de atravesarlos.
+        function moveGirl(girl, stepX, stepZ) {
+            if (!girlCollides(girl.position.x + stepX, girl.position.z)) girl.position.x += stepX;
+            if (!girlCollides(girl.position.x, girl.position.z + stepZ)) girl.position.z += stepZ;
+        }
+
+        // Coloca a la chica junto al robot (a distancia media). Si el punto de
+        // formación cae dentro de un muro, prueba varios ángulos hasta hallar un
+        // hueco libre. Se usa al empezar/reiniciar un nodo.
+        function placeGirlNearPlayer() {
+            const girl = monaChinaEntity;
+            const pRot = playerGroup.rotation.y;
+            const fx = Math.sin(pRot), fz = Math.cos(pRot);
+            const rx = Math.cos(pRot), rz = -Math.sin(pRot);
+            const candidates = [
+                { x: -fx * GIRL_FOLLOW_DIST + rx * GIRL_SIDE_DIST, z: -fz * GIRL_FOLLOW_DIST + rz * GIRL_SIDE_DIST },
+                { x: -fx * GIRL_FOLLOW_DIST - rx * GIRL_SIDE_DIST, z: -fz * GIRL_FOLLOW_DIST - rz * GIRL_SIDE_DIST },
+                { x: -fx * GIRL_FOLLOW_DIST, z: -fz * GIRL_FOLLOW_DIST },
+                { x: rx * GIRL_SIDE_DIST, z: rz * GIRL_SIDE_DIST },
+                { x: -rx * GIRL_SIDE_DIST, z: -rz * GIRL_SIDE_DIST }
+            ];
+            for (const o of candidates) {
+                const x = playerGroup.position.x + o.x, z = playerGroup.position.z + o.z;
+                if (!girlCollides(x, z)) { girl.position.set(x, 0, z); return; }
+            }
+            girl.position.set(playerGroup.position.x, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
         }
 
         // La chica: SEGUIDORA (imita tu marcha) o CAZADORA (si fallas la puerta)
@@ -1382,6 +1419,13 @@
                     const dir = new THREE.Vector3(); girl.getWorldDirection(dir);
                     girl.position.addScaledVector(dir, (girl.userData.speed || 14) * delta);
                 }
+                // Evitar que la perseguidora atraviese muros: si quedó dentro de
+                // uno, se desliza por el eje libre o vuelve a su posición previa.
+                if (girlCollides(girl.position.x, girl.position.z)) {
+                    if (!girlCollides(girl.position.x, before.z)) girl.position.z = before.z;
+                    else if (!girlCollides(before.x, girl.position.z)) girl.position.x = before.x;
+                    else girl.position.copy(before);
+                }
                 const moved = girl.position.distanceTo(before) > 0.01;
                 if (!overridden) {
                     girlState = setClip(girlMixer, girlActions, girlState, moved ? 'Running' : 'Idle', { timeScale: 1.3 });
@@ -1404,8 +1448,7 @@
                     const dd = Math.hypot(dx, dz);
                     if (dd > 0.4) {
                         const fspeed = Math.min(gameState.isSprinting ? 30 : 17, spd * 1.15);
-                        girl.position.x += (dx / dd) * fspeed * delta;
-                        girl.position.z += (dz / dd) * fspeed * delta;
+                        moveGirl(girl, (dx / dd) * fspeed * delta, (dz / dd) * fspeed * delta);
                     }
                     // ...pero su animación SIEMPRE imita la marcha del robot (caminar/correr)
                     if (!overridden) {
@@ -1508,6 +1551,9 @@
             buildArchitecturalDoors();
             setupInputListeners();
             loadGameModels(); // carga asíncrona de robot.glb + character.glb (se añaden al terminar)
+            // Mapa estructurado de Backrooms (glTF). Si falla, el Nivel 1
+            // usa automáticamente su mapa procedural clásico.
+            if (window.BackroomsMap) window.BackroomsMap.load();
             // Asegurar que la retícula esté oculta en 3ra persona de entrada
             document.getElementById('crosshair').style.display = 'none';
 
@@ -2028,9 +2074,11 @@
             LevelManager.spawnCollectibles(scene, 22);
             updateHUD();
 
-            // La chica vuelve a su posición de seguimiento y las animaciones se reinician
+            // La chica vuelve a su posición de seguimiento (distancia media) y
+            // las animaciones se reinician. Si el mapa tiene colisión, se
+            // recoloca junto al robot en un punto libre.
             if (girlModel && monaChinaEntity) {
-            monaChinaEntity.position.set(playerGroup.position.x + 6, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
+                placeGirlNearPlayer();
             }
             resetCharacterAnimStates();
 
@@ -2274,10 +2322,16 @@
             btnNext.innerText = "REINTENTAR ESCAPE ->";
             gameState.modalActionPending = 'retry';
 
-            // Tiempo de gracia y distanciamiento de seguridad
+            // Tiempo de gracia y distanciamiento de seguridad: la chica aparece
+            // considerablemente lejos (es más rápida que el robot, así que da
+            // tiempo a escapar antes de que vuelva a alcanzarte).
             gameState.enemyFrozenUntil = Date.now() + 4000;
             if (monaChinaEntity && monaChinaEntity.visible) {
-                monaChinaEntity.position.set(monaChinaEntity.position.x + 55, 0, monaChinaEntity.position.z + 55);
+                monaChinaEntity.position.set(
+                    playerGroup.position.x + GIRL_ESCAPE_DIST,
+                    0,
+                    playerGroup.position.z + GIRL_ESCAPE_DIST
+                );
             }
             if (freddyEntity && freddyEntity.visible) freddyEntity.position.set(50, 0, 110);
             if (bonnieEntity && bonnieEntity.visible) bonnieEntity.position.set(120, 0, -40);
@@ -2772,6 +2826,20 @@
             RTXPostprocessing.render(renderer, scene, camera);
         }
 
+        // Distancia de cámara libre de muros: acorta la vista en 3ª persona para
+        // que no atraviese las paredes. Reutiliza las colisiones del nivel activo.
+        function safeCameraDistance(desired) {
+            const dx = Math.sin(cameraYaw), dz = Math.cos(cameraYaw);
+            const shX = Math.cos(cameraYaw) * 1.5, shZ = -Math.sin(cameraYaw) * 1.5;
+            const px = playerGroup.position.x, pz = playerGroup.position.z;
+            let best = 0.9;
+            for (let d = 0.9; d <= desired; d += 0.4) {
+                if (LevelManager.checkCollision(px + dx * d + shX, pz + dz * d + shZ, 0.35)) break;
+                best = d;
+            }
+            return best;
+        }
+
         function updatePlayer(delta) {
             if (inputKeys.arrowleft) cameraYaw += 2.2 * delta;
             if (inputKeys.arrowright) cameraYaw -= 2.2 * delta;
@@ -2864,11 +2932,12 @@
                 const camHeight = 5.6 + Math.sin(cameraPitch) * 5.2;
                 const shoulderOffsetX = Math.cos(cameraYaw) * 1.5;
                 const shoulderOffsetZ = -Math.sin(cameraYaw) * 1.5;
+                const camD = safeCameraDistance(cameraDistance);
 
                 camera.position.set(
-                    playerGroup.position.x + Math.sin(cameraYaw) * cameraDistance + shoulderOffsetX,
+                    playerGroup.position.x + Math.sin(cameraYaw) * camD + shoulderOffsetX,
                     playerGroup.position.y + camHeight,
-                    playerGroup.position.z + Math.cos(cameraYaw) * cameraDistance + shoulderOffsetZ
+                    playerGroup.position.z + Math.cos(cameraYaw) * camD + shoulderOffsetZ
                 );
                 camera.lookAt(
                     playerGroup.position.x + shoulderOffsetX * 0.4,

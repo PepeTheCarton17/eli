@@ -79,8 +79,14 @@ window.LevelManager = {
             return wall;
         };
 
+        // 4b. Registro de colisión sin geometría (lo usan los mapas cargados
+        //     desde modelos, cuyos muros ya existen como mallas)
+        const registerObstacle = (minX, minZ, maxX, maxZ) => {
+            this.obstacles.push({ minX, maxX, minZ, maxZ });
+        };
+
         // 5. Construir geometría del nivel actual
-        this.currentMapGroup = level.buildMap(scene, registerWall);
+        this.currentMapGroup = level.buildMap(scene, registerWall, registerObstacle);
 
         return level;
     },
@@ -115,10 +121,17 @@ window.LevelManager = {
 
         let spawned = 0;
         let attempts = 0;
+        // Algunos niveles (p.ej. el modelo de Backrooms) limitan la zona útil
+        // con `collectibleBounds`; si no existe, se usa el cuadrado clásico.
+        const b = (this.getCurrentLevel() && this.getCurrentLevel().collectibleBounds) || null;
+        const halfX = b ? (b.maxX - b.minX) / 2 : 120;
+        const halfZ = b ? (b.maxZ - b.minZ) / 2 : 120;
+        const cX = b ? (b.maxX + b.minX) / 2 : 0;
+        const cZ = b ? (b.maxZ + b.minZ) / 2 : 0;
         while (spawned < count && attempts < 250) {
             attempts++;
-            const px = (Math.random() - 0.5) * 240;
-            const pz = (Math.random() - 0.5) * 240;
+            const px = cX + (Math.random() - 0.5) * 2 * halfX;
+            const pz = cZ + (Math.random() - 0.5) * 2 * halfZ;
 
             if (Math.hypot(px, pz) < 18 || this.checkCollision(px, pz, 2.8)) {
                 continue;
