@@ -7,31 +7,31 @@
     
     <!-- Librerías Externas vía CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     
     <!-- Three.js Postprocessing para Gráficos RTX (Bloom & HDR Glow) -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 
     <!-- Pipeline RTX y los 6 Niveles Modulares en Archivos Separados -->
-    <script src="js/rtxPostprocessing.js"></script>
-    <script src="levels/level1_backrooms.js"></script>
-    <script src="levels/level2_fnaf.js"></script>
-    <script src="levels/level3_blackbox.js"></script>
-    <script src="levels/level4_stochastic_parrots.js"></script>
-    <script src="levels/level5_model_collapse.js"></script>
-    <script src="levels/level6_testimonial_justice.js"></script>
-    <script src="levels/levelManager.js"></script>
-    <script src="levels/backrooms_map.js"></script>
-    <!-- Modelos GLB + soporte meshopt/webp -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_decoder.js"></script>
-    <script src="assets/models-embedded.js"></script>
+    <script defer src="js/rtxPostprocessing.js"></script>
+    <script defer src="levels/level1_backrooms.js"></script>
+    <script defer src="levels/level2_fnaf.js"></script>
+    <script defer src="levels/level3_blackbox.js"></script>
+    <script defer src="levels/level4_stochastic_parrots.js"></script>
+    <script defer src="levels/level5_model_collapse.js"></script>
+    <script defer src="levels/level6_testimonial_justice.js"></script>
+    <script defer src="levels/levelManager.js"></script>
+    <script defer src="levels/backrooms_map.js"></script>
+    <!-- Modelos GLB (meshopt). El glTF en base64 (1.6 MB) ya NO se carga al
+         inicio: solo se descarga como respaldo si el .glb falla (p.ej. file://). -->
+    <script defer src="https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_decoder.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
     <!-- Tipografías Cyberpunk y Académicas -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1001,6 +1001,11 @@
                         <span id="rtx-status-label" class="font-mono-tech text-xs font-bold text-emerald-400">RTX: ON</span>
                     </button>
 
+                    <button onclick="cycleQuality()" class="w-full flex items-center justify-between bg-black/60 hover:bg-cyan-950/60 border border-cyan-800/70 px-4 py-3 rounded-lg transition-colors">
+                        <span class="font-orbitron text-xs font-bold text-cyan-200">⚙ CALIDAD GRÁFICA</span>
+                        <span id="quality-status-label" class="font-mono-tech text-xs font-bold text-emerald-400">AUTO</span>
+                    </button>
+
                     <button onclick="toggleCameraView()" class="w-full flex items-center justify-between bg-black/60 hover:bg-cyan-950/60 border border-cyan-800/70 px-4 py-3 rounded-lg transition-colors">
                         <span class="font-orbitron text-xs font-bold text-cyan-200">🎥 VISTA DE CÁMARA</span>
                         <span id="camera-status-label" class="font-mono-tech text-xs font-bold text-emerald-400">3RA PERSONA</span>
@@ -1209,7 +1214,7 @@
         let skyBeamTruth, skyBeamHallucination;
         let decoyMesh = null;
 
-        let playerVelocity = new THREE.Vector3();
+        let playerVelocity = null; // se inicializa en init3D (THREE se carga en diferido)
         let isGrounded = true;
         let walkCycleTime = 0;
         let cameraYaw = 0;
@@ -1243,6 +1248,116 @@
         let girlOverride = null;        // { name, until }  (golpe de la chica)
         let girlAttacking = false;
         let modelsReady = false;
+
+        // ==================== CALIDAD ADAPTATIVA (RENDIMIENTO) ====================
+        // Deja que el juego corra en equipos muy modestos ("patatas"): detecta la
+        // potencia del equipo, ajusta bloom/sombras/resolución y, si detecta FPS
+        // bajos sostenidos, baja la calidad por sí solo. También se puede forzar
+        // manualmente desde Pausa. No altera ninguna funcionalidad del juego.
+        const Perf = {
+            mode: 'auto',          // 'auto' | 'high' | 'medium' | 'low'
+            level: 'high',         // nivel efectivo aplicado
+            _initLevel: 'high',    // techo detectado (auto no sube por encima)
+            _frames: 0, _acc: 0, _good: 0,
+            controlsBloom: true,
+
+            _detect() {
+                let g = '';
+                try {
+                    const c = renderer.getContext();
+                    const dbg = c.getExtension('WEBGL_debug_renderer_info');
+                    g = ((dbg ? c.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : c.getParameter(c.RENDERER)) || '').toLowerCase();
+                } catch (e) {}
+                if (/swiftshader|llvmpipe|software|microsoft basic/.test(g)) return 'low';
+                const cores = navigator.hardwareConcurrency || 4;
+                const mem = navigator.deviceMemory || 4;
+                if (cores <= 2 || mem <= 4) return 'low';
+                if (cores <= 4 || mem <= 8) return 'medium';
+                return 'high';
+            },
+
+            _label(v) { return ({ auto: 'AUTOMÁTICA', high: 'ALTA', medium: 'MEDIA', low: 'BAJA' })[v] || v; },
+
+            updateLabel() {
+                const el = document.getElementById('quality-status-label');
+                if (el) el.innerText = (this.mode === 'auto') ? ('AUTO · ' + this._label(this.level)) : this._label(this.mode);
+            },
+
+            apply(level) {
+                this.level = level;
+                const low = (level === 'low');
+                // 1) Bloom (RTX): solo en equipos capaces (es lo más caro).
+                if (this.controlsBloom && window.RTXPostprocessing && RTXPostprocessing.initialized) {
+                    RTXPostprocessing.isRTXEnabled = !low;
+                    const el = document.getElementById('rtx-status-label');
+                    if (el) el.innerText = RTXPostprocessing.isRTXEnabled ? 'RTX: ON' : 'RTX: OFF';
+                }
+                // 2) Sombras: PCF suave 2048 -> PCF 1024 -> sin sombras.
+                if (renderer && dirLight) {
+                    renderer.shadowMap.enabled = !low;
+                    renderer.shadowMap.type = (level === 'high') ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+                    const size = low ? 512 : (level === 'medium' ? 1024 : 2048);
+                    if (dirLight.shadow.mapSize.width !== size) {
+                        dirLight.shadow.mapSize.set(size, size);
+                        if (dirLight.shadow.map) { dirLight.shadow.map.dispose(); dirLight.shadow.map = null; }
+                    }
+                    renderer.shadowMap.needsUpdate = true;
+                }
+                // 3) Resolución: límite del pixel-ratio (el mayor ahorro de relleno).
+                if (renderer) {
+                    const cap = low ? 1 : (level === 'medium' ? 1.5 : 2);
+                    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                    if (window.RTXPostprocessing) RTXPostprocessing.setSize(window.innerWidth, window.innerHeight);
+                }
+                this.updateLabel();
+            },
+
+            setMode(mode) {
+                this.mode = mode;
+                this.controlsBloom = true;
+                try { localStorage.setItem('neonOracle.quality', mode); } catch (e) {}
+                if (mode === 'auto') { this._initLevel = this._detect(); this.apply(this._initLevel); }
+                else { this.apply(mode); }
+            },
+
+            init() {
+                let saved = null;
+                try { saved = localStorage.getItem('neonOracle.quality'); } catch (e) {}
+                if (saved && ['auto', 'high', 'medium', 'low'].indexOf(saved) >= 0) this.mode = saved;
+                this._initLevel = (this.mode === 'auto') ? this._detect() : this.mode;
+                this.apply(this._initLevel);
+            },
+
+            // Se llama cada frame; si el equipo va justo, baja la calidad.
+            tick(deltaMs) {
+                if (this.mode !== 'auto') return;
+                if (!(deltaMs > 0) || deltaMs > 250) return; // ignora pausas / pestaña en 2º plano
+                this._frames++; this._acc += deltaMs;
+                if (this._frames < 100) return;
+                const avg = this._acc / this._frames;
+                this._frames = 0; this._acc = 0;
+                if (avg > 34) {                      // < ~29 FPS sostenidos -> bajar
+                    this._good = 0;
+                    if (this.level === 'high') this.apply('medium');
+                    else if (this.level === 'medium') this.apply('low');
+                } else if (avg < 21) {               // > ~48 FPS -> subir (histéresis)
+                    this._good++;
+                    if (this._good >= 4) {
+                        this._good = 0;
+                        if (this.level === 'low' && this._initLevel !== 'low') this.apply('medium');
+                        else if (this.level === 'medium' && this._initLevel === 'high') this.apply('high');
+                    }
+                } else { this._good = 0; }
+            }
+        };
+
+        function cycleQuality() {
+            const order = ['auto', 'high', 'medium', 'low'];
+            const next = order[(order.indexOf(Perf.mode) + 1) % order.length];
+            Perf.setMode(next);
+            if (typeof showHUDNotification === 'function') showHUDNotification('CALIDAD GRÁFICA: ' + Perf._label(next));
+        }
 
         // "RobotArmature|Robot_Walking" -> "Walking" (y deja igual los ya limpios)
         function normalizeClipName(name) {
@@ -1281,14 +1396,45 @@
             if (!THREE.GLTFLoader) { console.warn('GLTFLoader no disponible: se usan personajes procedurales.'); return; }
             const loader = new THREE.GLTFLoader();
             if (window.MeshoptDecoder) loader.setMeshoptDecoder(window.MeshoptDecoder);
-            const embedded = window.NEON_MODEL_ASSETS || null;
+
+            // El .glb binario es idéntico al base64 embebido y pesa menos, así que
+            // se intenta primero (no bloquea el arranque). Solo si falla (p. ej.
+            // abriendo el archivo con file://) se descarga el recurso embebido.
+            let embeddedPromise = null;
+            const ensureEmbedded = () => {
+                if (window.NEON_MODEL_ASSETS) return Promise.resolve(window.NEON_MODEL_ASSETS);
+                if (embeddedPromise) return embeddedPromise;
+                embeddedPromise = new Promise((resolve) => {
+                    const s = document.createElement('script');
+                    s.src = 'assets/models-embedded.js';
+                    s.onload = () => resolve(window.NEON_MODEL_ASSETS || null);
+                    s.onerror = () => resolve(null);
+                    document.head.appendChild(s);
+                });
+                return embeddedPromise;
+            };
+
+            const loadEmbedded = (key, onOk) => {
+                ensureEmbedded().then((assets) => {
+                    if (assets && assets[key]) {
+                        try { loader.parse(b64ToArrayBuffer(assets[key]), '', onOk, (e) => console.warn('Modelo "' + key + '" no disponible', e)); }
+                        catch (e) { console.warn('Modelo "' + key + '" no disponible', e); }
+                    } else {
+                        console.warn('Modelo "' + key + '" no disponible.');
+                    }
+                });
+            };
+
             const load = (key, onOk) => {
-                const onErr = (e) => console.warn('No se pudo cargar el modelo "' + key + '"', e);
-                if (embedded && embedded[key]) {
-                    try { loader.parse(b64ToArrayBuffer(embedded[key]), '', onOk, onErr); } catch (e) { onErr(e); }
-                } else {
-                    loader.load('assets/models/' + key + '.glb', onOk, undefined, onErr);
-                }
+                loader.load(
+                    'assets/models/' + key + '.glb',
+                    onOk,
+                    undefined,
+                    (e) => {
+                        console.warn('No se pudo cargar "' + key + '.glb"; usando el recurso embebido.', e && e.message ? e.message : e);
+                        loadEmbedded(key, onOk);
+                    }
+                );
             };
             load('robot', attachRobotModel);
             load('character', attachGirlModel);
@@ -1532,6 +1678,7 @@
         function init3D() {
             const container = document.getElementById('canvas-container');
             clock = new THREE.Clock();
+            if (!playerVelocity) playerVelocity = new THREE.Vector3();
 
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xd6ba73);
@@ -1553,6 +1700,8 @@
             setupLights();
             LevelManager.init();
             RTXPostprocessing.init(renderer, scene, camera);
+            // Calidad adaptativa: ajusta bloom/sombras/resolución al equipo.
+            Perf.init();
 
             buildCoolPlayerCharacter();
             buildMonaChinaAnime();
@@ -2420,6 +2569,7 @@
         }
 
         function toggleRTXMode() {
+            if (typeof Perf !== 'undefined') Perf.controlsBloom = false; // el ajuste manual manda
             const isEnabled = RTXPostprocessing.toggle();
             const el = document.getElementById('rtx-status-label');
             if (el) el.innerText = isEnabled ? "RTX: ON" : "RTX: OFF";
@@ -2815,7 +2965,8 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = Math.min(clock.getDelta(), 0.1);
+            const rawDelta = clock.getDelta();
+            const delta = Math.min(rawDelta, 0.1);
 
             // Pausa/restaura automáticamente el sonido: se silencia al pausar,
             // al abrir cualquier menú/modal y en el menú principal.
@@ -2833,6 +2984,7 @@
             }
 
             RTXPostprocessing.render(renderer, scene, camera);
+            Perf.tick(rawDelta * 1000);
         }
 
         // Distancia de cámara libre de muros: acorta la vista en 3ª persona para
@@ -3050,37 +3202,43 @@
             }
         }
 
+        const _compassEls = { truth: null, hall: null, sec: null, chaser: null };
+        const _compassLast = { truth: -1, hall: -1, sec: -1, chaser: -1 };
+
         function updateCompass() {
-            const blipTruth = document.getElementById('blip-truth');
-            const blipHallucination = document.getElementById('blip-hallucination');
-            const blipSecurity = document.getElementById('blip-security');
-            const blipChaser = document.getElementById('blip-chaser');
+            if (!_compassEls.truth) {
+                _compassEls.truth = document.getElementById('blip-truth');
+                _compassEls.hall = document.getElementById('blip-hallucination');
+                _compassEls.sec = document.getElementById('blip-security');
+                _compassEls.chaser = document.getElementById('blip-chaser');
+            }
             const barWidth = 300;
 
-            function calculateBlip(targetPos) {
-                const diff = targetPos.clone().sub(playerGroup.position);
-                let angle = Math.atan2(diff.x, diff.z) - cameraYaw;
+            // Escribe en el DOM solo cuando el valor (redondeado) cambia: evita
+            // recalcular estilos 4 veces por frame sin necesidad.
+            function setBlip(el, key, x, z) {
+                if (!el) return;
+                const dx = x - playerGroup.position.x;
+                const dz = z - playerGroup.position.z;
+                let angle = Math.atan2(dx, dz) - cameraYaw;
                 while (angle > Math.PI) angle -= 2 * Math.PI;
                 while (angle < -Math.PI) angle += 2 * Math.PI;
                 const norm = angle / (Math.PI / 2);
-                const left = (barWidth / 2) - (norm * (barWidth / 2));
-                return Math.max(8, Math.min(barWidth - 8, left));
+                let left = (barWidth / 2) - (norm * (barWidth / 2));
+                left = Math.round(Math.max(8, Math.min(barWidth - 8, left)));
+                if (left !== _compassLast[key]) { _compassLast[key] = left; el.style.left = left + 'px'; }
             }
 
-            if (doorTruthGroup && doorTruthGroup.visible) blipTruth.style.left = `${calculateBlip(doorTruthGroup.position)}px`;
-            if (doorHallucinationGroup && doorHallucinationGroup.visible) blipHallucination.style.left = `${calculateBlip(doorHallucinationGroup.position)}px`;
-            if (gameState.fnafModeActive) {
-                blipSecurity.style.left = `${calculateBlip(new THREE.Vector3(Level2_FNAF.securityOffice.x, 0, Level2_FNAF.securityOffice.z))}px`;
-            }
+            if (doorTruthGroup && doorTruthGroup.visible) setBlip(_compassEls.truth, 'truth', doorTruthGroup.position.x, doorTruthGroup.position.z);
+            if (doorHallucinationGroup && doorHallucinationGroup.visible) setBlip(_compassEls.hall, 'hall', doorHallucinationGroup.position.x, doorHallucinationGroup.position.z);
+            if (gameState.fnafModeActive) setBlip(_compassEls.sec, 'sec', Level2_FNAF.securityOffice.x, Level2_FNAF.securityOffice.z);
 
             let threat = null;
             if (monaChinaEntity && monaChinaEntity.visible) threat = monaChinaEntity;
             else if (freddyEntity && freddyEntity.visible) threat = freddyEntity;
             else if (bonnieEntity && bonnieEntity.visible) threat = bonnieEntity;
 
-            if (threat && gameState.isChased) {
-                blipChaser.style.left = `${calculateBlip(threat.position)}px`;
-            }
+            if (threat && gameState.isChased) setBlip(_compassEls.chaser, 'chaser', threat.position.x, threat.position.z);
         }
 
         window.addEventListener('DOMContentLoaded', init3D);

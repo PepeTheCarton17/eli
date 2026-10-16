@@ -61,6 +61,13 @@ window.LevelManager = {
             }
         }
 
+        // Recorte lejano: nada más allá de la niebla es visible, así que se
+        // limita el frustum de la cámara para descartar objetos invisibles.
+        if (typeof camera !== 'undefined' && camera && scene.fog) {
+            camera.far = Math.max(260, scene.fog.far + 100);
+            camera.updateProjectionMatrix();
+        }
+
         // 4. Callback para registrar muros con sombras RTX activas
         const registerWall = (x, z, w, d, mat, parentGroup) => {
             const wallGeo = new THREE.BoxGeometry(w, 16, d);
