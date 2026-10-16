@@ -1210,7 +1210,7 @@
 
         let scene, camera, renderer, clock;
         let dirLight, ambientLight;
-        let playerGroup, monaChinaEntity, freddyEntity, bonnieEntity;
+        let playerGroup, monaChinaEntity, mitaEntity, freddyEntity, bonnieEntity;
         let doorTruthGroup, doorHallucinationGroup;
         let skyBeamTruth, skyBeamHallucination;
         let decoyMesh = null;
@@ -1241,7 +1241,23 @@
         const GIRL_RADIUS = 1.2;        // radio de colisión de la chica contra los muros
         const GIRL_ESCAPE_DIST = 55;    // al matarte aparece a esta distancia (es más rápida que tú)
 
-        let robotModel = null, girlModel = null;
+        // ==================== FOXY (ANIMATRÓNICO) Y MITA (2ª SEGUIDORA) ====================
+        // Los .glb son estáticos (sin esqueleto ni animaciones), así que se
+        // escalan por su altura real y se mueven rígidos. Foxy conserva los
+        // grupos freddyEntity/bonnieEntity, de modo que toda la IA de
+        // persecución FNAF sigue funcionando igual.
+        // Altura y "pies" REALES de cada .glb (medidos con gltf-transform). Se
+        // fijan a mano —igual que MODEL_SRC_H— porque las mallas vienen
+        // cuantizadas (i16 normalizado) y Box3.setFromObject no es fiable.
+        const FOXY_SRC_H = 201.43, FOXY_SRC_MIN_Y = -6.70;
+        const MITA_SRC_H = 68.46, MITA_SRC_MIN_Y = 0.0;
+        const FOXY_GAME_H = 8.0;        // altura de Foxy en unidades del juego
+        const MITA_GAME_H = 5.6;        // altura de Mita (la chica mide 6.8)
+        const MITA_FOLLOW_DIST = 2.8;   // va un poco más cerca que la chica...
+        const MITA_SIDE_DIST = -3.4;    // ...y por el lado contrario (no se pisan)
+        const MITA_RADIUS = 1.1;        // radio de colisión de Mita contra los muros
+
+        let robotModel = null, girlModel = null, foxyModel = null, mitaModel = null;
         let robotMixer = null, girlMixer = null;
         let robotActions = {}, girlActions = {};
         let robotState = null, girlState = null;
@@ -1439,6 +1455,8 @@
             };
             load('robot', attachRobotModel);
             load('character', attachGirlModel);
+            load('foxy', attachFoxyModel);   // animatrónico del Nivel 2
+            load('mita', attachMitaModel);   // segunda seguidora
         }
 
         function attachRobotModel(gltf) {
@@ -1475,6 +1493,45 @@
             monaChinaEntity.visible = true;
             monaChinaEntity.position.set(playerGroup.position.x + GIRL_SIDE_DIST, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
             console.log('Chica cargada: ' + gltf.animations.length + ' animaciones (' + Object.keys(girlActions).join(', ') + ')');
+        }
+
+        // Prepara un modelo ESTÁTICO (sin esqueleto): lo escala a `targetH` y
+        // deja sus pies en y=0. La altura y el mínimo Y reales del .glb se pasan
+        // a mano (srcH/srcMinY) para no depender de la cuantización.
+        function prepareStaticModel(gltf, targetH, srcH, srcMinY) {
+            const root = gltf.scene;
+            root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+            const s = targetH / Math.max(0.0001, srcH);
+            root.scale.setScalar(s);
+            root.position.y = -srcMinY * s;
+            return root;
+        }
+
+        // Animatrónicos del Nivel 2: sustituye las figuras procedurales de
+        // Freddy/Bonnie por el modelo glTF de FOXY. Se conservan los grupos
+        // `freddyEntity`/`bonnieEntity` como contenedores: la persecución, la
+        // colocación y la brújula no cambian. El clon comparte geometría y
+        // texturas (coste de memoria de un solo modelo).
+        function attachFoxyModel(gltf) {
+            foxyModel = prepareStaticModel(gltf, FOXY_GAME_H, FOXY_SRC_H, FOXY_SRC_MIN_Y);
+            [freddyEntity, bonnieEntity].forEach(ent => {
+                if (!ent) return;
+                ent.children.forEach(c => { if (c.isMesh) c.visible = false; }); // oculta lo procedural
+                ent.add(foxyModel.clone(true));
+            });
+            console.log('Foxy cargado para el Nivel 2 (' + FOXY_GAME_H + ' uds de alto).');
+        }
+
+        // Segunda seguidora: MITA. Mismo patrón que la chica (modelo glTF si está
+        // disponible; si no, se queda la figura procedural).
+        function attachMitaModel(gltf) {
+            mitaModel = prepareStaticModel(gltf, MITA_GAME_H, MITA_SRC_H, MITA_SRC_MIN_Y);
+            if (mitaEntity) {
+                mitaEntity.children.forEach(c => { if (c.isMesh) c.visible = false; });
+                mitaEntity.add(mitaModel);
+                mitaEntity.visible = true;
+            }
+            console.log('Mita cargada (' + MITA_GAME_H + ' uds de alto).');
         }
 
         // Emotes del robot (botones del HUD): CAMINAR / CORRER / MORIR
@@ -1618,6 +1675,73 @@
             }
         }
 
+        // ---------------- MITA: segunda seguidora ----------------
+        // (La chica puede volverse hostil si fallas una puerta; Mita SIEMPRE
+        // sigue al robot, en todos los niveles.)
+        function mitaCollides(x, z) {
+            return LevelManager.checkCollision(x, z, MITA_RADIUS);
+        }
+
+        function moveMita(ent, stepX, stepZ) {
+            if (!mitaCollides(ent.position.x + stepX, ent.position.z)) ent.position.x += stepX;
+            if (!mitaCollides(ent.position.x, ent.position.z + stepZ)) ent.position.z += stepZ;
+        }
+
+        // Coloca a Mita junto al robot (al lado contrario que la chica).
+        function placeMitaNearPlayer() {
+            const ent = mitaEntity;
+            if (!ent) return;
+            const pRot = playerGroup.rotation.y;
+            const fx = Math.sin(pRot), fz = Math.cos(pRot);
+            const rx = Math.cos(pRot), rz = -Math.sin(pRot);
+            const candidates = [
+                { x: -fx * MITA_FOLLOW_DIST + rx * MITA_SIDE_DIST, z: -fz * MITA_FOLLOW_DIST + rz * MITA_SIDE_DIST },
+                { x: -fx * MITA_FOLLOW_DIST - rx * MITA_SIDE_DIST, z: -fz * MITA_FOLLOW_DIST - rz * MITA_SIDE_DIST },
+                { x: rx * MITA_SIDE_DIST, z: rz * MITA_SIDE_DIST },
+                { x: -rx * MITA_SIDE_DIST, z: -rz * MITA_SIDE_DIST }
+            ];
+            for (const o of candidates) {
+                const x = playerGroup.position.x + o.x, z = playerGroup.position.z + o.z;
+                if (!mitaCollides(x, z)) { ent.position.set(x, 0, z); return; }
+            }
+            ent.position.set(playerGroup.position.x, 0, playerGroup.position.z + MITA_FOLLOW_DIST);
+        }
+
+        // Mita sigue al robot imitando su marcha. Resuelve cada eje por separado
+        // para deslizarse por los muros (nunca los atraviesa).
+        function updateMita(delta) {
+            const ent = mitaEntity;
+            if (!ent || !ent.visible) return;
+            if (Date.now() < gameState.enemyFrozenUntil) return;
+
+            const time = clock.getElapsedTime();
+            const dx0 = playerGroup.position.x - ent.position.x;
+            const dz0 = playerGroup.position.z - ent.position.z;
+            if (dx0 * dx0 + dz0 * dz0 > 0.0025) {
+                ent.rotation.y = Math.atan2(dx0, dz0);   // mira al robot
+            }
+
+            const pRot = playerGroup.rotation.y;
+            const fx = Math.sin(pRot), fz = Math.cos(pRot);
+            const rx = Math.cos(pRot), rz = -Math.sin(pRot);
+            const tx = playerGroup.position.x - fx * MITA_FOLLOW_DIST + rx * MITA_SIDE_DIST;
+            const tz = playerGroup.position.z - fz * MITA_FOLLOW_DIST + rz * MITA_SIDE_DIST;
+            const dx = tx - ent.position.x, dz = tz - ent.position.z;
+            const dd = Math.hypot(dx, dz);
+            // Se mueve si el robot camina (imita su marcha) o si se ha quedado
+            // atrás de más (no se pierde entre las salas del mapa).
+            const spd = Math.hypot(playerVelocity.x, playerVelocity.z);
+            const far = Math.hypot(playerGroup.position.x - ent.position.x, playerGroup.position.z - ent.position.z);
+            const moving = dd > 0.6 && (spd > 1.0 || far > 18);
+            if (moving) {
+                const fspeed = Math.min(gameState.isSprinting ? 30 : 18, Math.max(spd * 1.15, 11));
+                const step = Math.min(dd, fspeed * delta);
+                moveMita(ent, (dx / dd) * step, (dz / dd) * step);
+            }
+            // El modelo es estático: un leve balanceo da sensación de marcha.
+            if (mitaModel) mitaModel.rotation.z = Math.sin(time * 6.0) * 0.035 * (moving ? 1 : 0.3);
+        }
+
         // La chica alcanza al robot: PUNCH de ella + DEATH del robot -> modal de reintento
         function girlCatchesRobot() {
             if (girlAttacking || !gameState.isPlaying || gameState.isPaused) return;
@@ -1706,6 +1830,7 @@
 
             buildCoolPlayerCharacter();
             buildMonaChinaAnime();
+            buildMita();
             buildFNAFAnimatronics();
             buildArchitecturalDoors();
             setupInputListeners();
@@ -1883,6 +2008,59 @@
             monaChinaEntity.userData = { tailL, tailR, stasis, hairMat, speed: 14.0 };
             monaChinaEntity.visible = false;
             scene.add(monaChinaEntity);
+        }
+
+        // Figura procedural de MITA (respaldo si el .glb no carga). Sencilla: es
+        // una seguidora secundaria, así que prima el coste bajo.
+        function buildMita() {
+            mitaEntity = new THREE.Group();
+
+            const skinMat = new THREE.MeshStandardMaterial({ color: 0xffe3d0, roughness: 0.35 });
+            const hairMat = new THREE.MeshStandardMaterial({ color: 0x2b1a33, roughness: 0.45 });
+            const dressMat = new THREE.MeshStandardMaterial({ color: 0xe8e8f2, roughness: 0.5 });
+
+            const head = new THREE.Mesh(new THREE.SphereGeometry(1.0, 14, 14), skinMat);
+            head.position.y = 4.0;
+            head.castShadow = true;
+            mitaEntity.add(head);
+
+            const hair = new THREE.Mesh(new THREE.SphereGeometry(1.1, 14, 14), hairMat);
+            hair.position.set(0, 4.15, -0.15);
+            hair.scale.set(1.02, 1.0, 1.05);
+            mitaEntity.add(hair);
+
+            const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff2b4d, emissive: 0xff2b4d, emissiveIntensity: 1.3 });
+            const eyeGeo = new THREE.PlaneGeometry(0.34, 0.44);
+            const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeL.position.set(-0.32, 4.02, 0.94);
+            const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeR.position.set(0.32, 4.02, 0.94);
+            mitaEntity.add(eyeL);
+            mitaEntity.add(eyeR);
+
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.7, 0.8), dressMat);
+            torso.position.y = 2.7;
+            torso.castShadow = true;
+            mitaEntity.add(torso);
+
+            const skirt = new THREE.Mesh(new THREE.ConeGeometry(1.35, 1.2, 12, 1, true), dressMat);
+            skirt.position.y = 1.85;
+            skirt.rotation.x = Math.PI;
+            skirt.castShadow = true;
+            mitaEntity.add(skirt);
+
+            const legMat = new THREE.MeshStandardMaterial({ color: 0x1b1b26, roughness: 0.8 });
+            const legL = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 1.9), legMat);
+            legL.position.set(-0.4, 0.95, 0);
+            legL.castShadow = true;
+            const legR = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 1.9), legMat);
+            legR.position.set(0.4, 0.95, 0);
+            legR.castShadow = true;
+            mitaEntity.add(legL);
+            mitaEntity.add(legR);
+
+            mitaEntity.visible = false;
+            scene.add(mitaEntity);
         }
 
         function buildFNAFAnimatronics() {
@@ -2211,8 +2389,10 @@
             cameraPitch = 0.22;
 
             monaChinaEntity.visible = true;
+            if (mitaEntity) mitaEntity.visible = true;
             freddyEntity.visible = false;
             bonnieEntity.visible = false;
+
             gameState.isChased = false;
             gameState.fnafModeActive = false;
             gameState.securityDoorClosed = false;
@@ -2230,6 +2410,19 @@
                     playerGroup.position.set(sp.x, 0, sp.z);
                     playerVelocity.set(0, 0, 0);
                 }
+            }
+
+            // NIVEL 2 (FNAF): los animatrónicos (Foxy) quedan PLANTADOS en el
+            // mapa desde el principio, quietos, para que el jugador los
+            // encuentre al explorar. Solo persiguen si falla la puerta.
+            if (lvl && lvl.theme === "fnaf_pizzeria" && freddyEntity && bonnieEntity) {
+                const ax = playerGroup.position.x, az = playerGroup.position.z;
+                const f = LevelManager.findFreeSpot(ax, az, 45, 95, 2.5, 0, false);
+                const bn = LevelManager.findFreeSpot(ax, az, 45, 95, 2.5, Math.PI, false);
+                freddyEntity.position.set(f.x, 0, f.z);
+                bonnieEntity.position.set(bn.x, 0, bn.z);
+                freddyEntity.visible = true;
+                bonnieEntity.visible = true;
             }
 
             doorTruthGroup.visible = true;
@@ -2253,6 +2446,7 @@
             if (girlModel && monaChinaEntity) {
                 placeGirlNearPlayer();
             }
+            if (mitaEntity) placeMitaNearPlayer();
             resetCharacterAnimStates();
 
             // Panel de instrucciones temporal: se muestra unos segundos y se desvanece
@@ -2514,6 +2708,10 @@
             if (bonnieEntity && bonnieEntity.visible) {
                 const bn = LevelManager.findFreeSpot(ax, az, 26, 50, 2.5, Math.PI, false);
                 bonnieEntity.position.set(bn.x, 0, bn.z);
+            }
+            if (mitaEntity && mitaEntity.visible) {
+                const m = LevelManager.findFreeSpot(ax, az, 8, 18, MITA_RADIUS, Math.PI * 0.5, false);
+                mitaEntity.position.set(m.x, 0, m.z);
             }
 
             // El robot reaparece en un punto libre cercano (antes (0,0,z+15), que
@@ -3207,6 +3405,7 @@
             // LA CHICA: sigue al robot siempre (y lo caza si fallaste una puerta).
             // Se gestiona aparte para que funcione en TODOS los niveles.
             updateGirl(delta);
+            updateMita(delta);
 
             if (!gameState.isChased) return;
 

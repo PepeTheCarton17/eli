@@ -308,6 +308,13 @@ window.Level2_FNAF = {
             bonnie.userData.earL.rotation.z = Math.sin(time * 11.0) * 0.25;
             bonnie.userData.earR.rotation.z = -Math.sin(time * 11.0) * 0.25;
         }
+
+        // El modelo glTF de Foxy es ESTÁTICO (sin esqueleto): un ligero balanceo
+        // vertical/lateral le da sensación de marcha al perseguir.
+        freddy.position.y = Math.abs(Math.sin(time * 9.0)) * 0.35;
+        freddy.rotation.z = Math.sin(time * 9.0) * 0.03;
+        bonnie.position.y = Math.abs(Math.sin(time * 9.0 + 1.3)) * 0.35;
+        bonnie.rotation.z = -Math.sin(time * 9.0 + 1.3) * 0.03;
     },
 
     _chaseSinusoidal(entity, target, speed, delta, time, phase) {

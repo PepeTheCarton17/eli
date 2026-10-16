@@ -143,16 +143,27 @@ window.PizzeriaMap = {
             ceil: (wb.maxY - wb.minY) * S
         };
 
-        // 2) Rejillas (coords del modelo). Se rasterizan AMBAS en una sola pasada
+        // 2) Nivel del SUELO de la pizzería (la mayor superficie horizontal
+        //    plana). El modelo lo tiene elevado respecto al origen (~33 uds),
+        //    así que sin esto el jugador y los objetos caen POR DEBAJO del mapa.
+        this.floorY = this._findFloorY(root, wb);
+        if (this.floorY == null) this.floorY = wb.minY;
+        this.bounds.floorY = 0;                       // tras bajar el mapa, el suelo queda en y=0
+        this.bounds.ceil = (wb.maxY - this.floorY) * S;
+
+        // 3) Rejillas (coords del modelo). Se rasterizan AMBAS en una sola pasada
         //    de triángulos (gruesa para alcanzabilidad, fina para colisión):
-        //    así la carga cuesta la mitad.
-        const playerTop = this.PLAYER_HEIGHT / this.scale;
+        //    así la carga cuesta la mitad. Se descartan los triángulos que quedan
+        //    por debajo del suelo o por encima de la cabeza del jugador (los
+        //    dinteles por encima de la cabeza NO deben bloquear las puertas).
+        const yLow = this.floorY;
+        const yHigh = this.floorY + this.PLAYER_HEIGHT / this.scale;
         const gCoarse = this._newGrid(this.CELL, wb);
         const gFine = this._newGrid(this.COLLIDE_CELL, wb);
         this._forEachWallTriangle(root, (va, vb, vc) => {
             this._markTri(gCoarse, va, vb, vc);
             this._markTri(gFine, va, vb, vc);
-        }, playerTop);
+        }, yLow, yHigh);
         this._sealGrid(gCoarse);
         this._sealGrid(gFine);
         this.grid = gCoarse;
@@ -197,8 +208,39 @@ window.PizzeriaMap = {
         return skip;
     },
 
-    // Recorre todos los triángulos "de muro" (verticales y con altura útil).
-    _forEachWallTriangle(root, cb, playerTop) {
+    // Nivel del SUELO transitable. Muchos modelos traen el suelo elevado
+    // respecto al origen; devolver esa altura permite bajar el mapa para que el
+    // jugador y los objetos queden ENCIMA y no por debajo. Se toman las
+    // superficies horizontales planas y grandes (candidatas a suelo) y se usa la
+    // MEDIANA de sus alturas: así un par de mallas gruesas (escalones, rampas)
+    // no desvían el resultado. Se ignoran las mallas de fondo (la baseplate).
+    _findFloorY(root, wb) {
+        const h = wb.maxY - wb.minY;
+        if (!(h > 0)) return null;
+        const maxDy = h * 0.03;                      // 3% de la altura del edificio
+        const minArea = (wb.maxX - wb.minX) * (wb.maxZ - wb.minZ) * 0.02;
+        const ys = [];
+        root.traverse(o => {
+            if (!o.isMesh || !o.geometry) return;
+            if (this._skip && this._skip.has(o)) return;
+            const g = o.geometry;
+            if (!g.boundingBox) g.computeBoundingBox();
+            const bb = g.boundingBox.clone().applyMatrix4(o.matrixWorld);
+            if (bb.max.y - bb.min.y > maxDy) return;  // no es plano
+            const area = (bb.max.x - bb.min.x) * (bb.max.z - bb.min.z);
+            if (area < minArea) return;
+            ys.push(bb.max.y);
+        });
+        if (!ys.length) return null;
+        ys.sort((a, b) => a - b);
+        return ys[ys.length >> 1];
+    },
+
+    // Recorre todos los triángulos "de muro" (verticales y de altura útil).
+    //   yLow  (opcional): si el triángulo queda ENTERO por debajo, se ignora.
+    //   yHigh (opcional): si queda ENTERAMENTE por encima (dintel por encima de
+    //                     la cabeza del jugador), se ignora.
+    _forEachWallTriangle(root, cb, yLow, yHigh) {
         const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
         const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nrm = new THREE.Vector3();
         root.traverse(o => {
@@ -218,9 +260,9 @@ window.PizzeriaMap = {
                 vc.fromBufferAttribute(pos, i2).applyMatrix4(o.matrixWorld);
 
                 const yMin = Math.min(va.y, vb.y, vc.y), yMax = Math.max(va.y, vb.y, vc.y);
-                if (yMax - yMin < 0.5) continue;    // suelo o techo
-                if (yMax < 0.35) continue;          // objeto bajo (zócalo, cable...)
-                if (playerTop != null && yMin > playerTop) continue; // por encima de la cabeza
+                if (yMax - yMin < 0.5) continue;              // suelo o techo
+                if (yLow != null && yMax < yLow) continue;     // por debajo del suelo
+                if (yHigh != null && yMin > yHigh) continue;   // por encima de la cabeza
                 nrm.copy(e1.copy(vb).sub(va)).cross(e2.copy(vc).sub(va)).normalize();
                 if (Math.abs(nrm.y) > 0.5) continue; // no vertical (excluye techos/rampas)
                 cb(va, vb, vc);
@@ -304,25 +346,49 @@ window.PizzeriaMap = {
         return { ix, iz };
     },
 
-    // Flood fill (4 direcciones) desde la aparición.
+    // Etiqueta las componentes conectadas del espacio libre, elige la MAYOR y
+    // fija la aparición en la celda de esa componente más próxima al centro del
+    // edificio. Así el jugador nunca aparece encerrado en una sala minúscula y
+    // el área jugable (y la Sala de Seguridad) es la mayor posible.
     _computeReach() {
-        const g = this.grid;
-        const reach = new Uint8Array(g.w * g.h);
-        const start = this.spawnCell;
+        const g = this.grid, W = g.w, H = g.h, data = g.data, N = W * H;
+        const comp = new Int32Array(N).fill(-1);
+        const sizes = [];
         const q = [];
-        if (!this.isWall(start.ix, start.iz)) { reach[start.iz * g.w + start.ix] = 1; q.push(start.ix, start.iz); }
-        let count = 0;
-        while (q.length) {
-            const iz = q.pop(), ix = q.pop();
-            count++;
-            const nb = [[ix + 1, iz], [ix - 1, iz], [ix, iz + 1], [ix, iz - 1]];
-            for (const [nx, nz] of nb) {
-                if (nx < 0 || nz < 0 || nx >= g.w || nz >= g.h) continue;
-                const k = nz * g.w + nx;
-                if (reach[k] || g.data[k] === 1) continue;
-                reach[k] = 1; q.push(nx, nz);
+        for (let i = 0; i < N; i++) {
+            if (data[i] === 1 || comp[i] !== -1) continue;
+            const id = sizes.length;
+            let n = 0;
+            comp[i] = id; q.push(i);
+            while (q.length) {
+                const k = q.pop(); n++;
+                const ix = k % W, iz = (k - ix) / W;
+                if (ix > 0)     { const j = k - 1; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
+                if (ix < W - 1) { const j = k + 1; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
+                if (iz > 0)     { const j = k - W; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
+                if (iz < H - 1) { const j = k + W; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
             }
+            sizes.push(n);
         }
+        if (!sizes.length) { this.reach = null; this.reachCount = 0; return; }
+
+        let big = 0;
+        for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[big]) big = i;
+
+        // Aparición: celda de la mayor componente más cercana a la preferida.
+        const pref = this.spawnCell || { ix: W >> 1, iz: H >> 1 };
+        let bx = pref.ix, bz = pref.iz, bd = Infinity;
+        for (let k = 0; k < N; k++) {
+            if (comp[k] !== big) continue;
+            const ix = k % W, iz = (k - ix) / W;
+            const d = (ix - pref.ix) * (ix - pref.ix) + (iz - pref.iz) * (iz - pref.iz);
+            if (d < bd) { bd = d; bx = ix; bz = iz; }
+        }
+        this.spawnCell = { ix: bx, iz: bz };
+
+        const reach = new Uint8Array(N);
+        let count = 0;
+        for (let k = 0; k < N; k++) if (comp[k] === big) { reach[k] = 1; count++; }
         this.reach = reach;
         this.reachCount = count;
     },
@@ -387,7 +453,9 @@ window.PizzeriaMap = {
         const group = new THREE.Group();
 
         const clone = this.scene.clone(true);
-        clone.position.set(-this.center.x * S, 0, -this.center.z * S);
+        // Se centra en X/Z y se BAJA para que el suelo de la pizzería quede en
+        // y=0 (el modelo lo trae elevado: sin esto el jugador aparece debajo).
+        clone.position.set(-this.center.x * S, -this.floorY * S, -this.center.z * S);
         clone.scale.setScalar(S);
         clone.traverse(o => {
             if (!o.isMesh) return;
