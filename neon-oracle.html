@@ -1175,7 +1175,7 @@
 
         const gameState = {
             currentNodeIndex: 0,
-            timeLeft: 360,
+            timeLeft: 300,
             timerId: null,
             isPlaying: false,
             isPaused: false,
@@ -1225,7 +1225,7 @@
         // ==================== MODELOS GLB 3D (ROBOT = JUGADOR / CHICA = SEGUIDORA) ====================
         // Altura real de cada GLB (m) y altura objetivo en unidades del juego.
         const MODEL_SRC_H = { robot: 0.90, character: 1.756 };
-        const MODEL_GAME_H = { robot: 4.8, character: 5.8 };
+        const MODEL_GAME_H = { robot: 4.8, character: 6.2 };
         const GIRL_FOLLOW_DIST = 3.0;   // distancia detrás del robot (punto de formación)
         const GIRL_SIDE_DIST = 3.0;     // desplazamiento lateral (ni pegada ni lejos, pero sin tapar la cámara)
         const GIRL_CATCH_DIST = 3.2;    // a esta distancia te golpea (cuando te persigue)
@@ -1307,8 +1307,13 @@
 
         function attachGirlModel(gltf) {
             const root = gltf.scene;
-            root.scale.setScalar(MODEL_GAME_H.character / MODEL_SRC_H.character);
             root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+            // Escalar según la altura REAL del modelo: el GLB no mide exactamente
+            // lo que declara MODEL_SRC_H, y de eso dependía su tamaño en escena.
+            root.updateMatrixWorld(true);
+            const rawBox = new THREE.Box3().setFromObject(root);
+            const rawH = Math.max(0.001, rawBox.max.y - rawBox.min.y);
+            root.scale.setScalar(MODEL_GAME_H.character / rawH);
             monaChinaEntity.children.forEach(c => { if (c.isMesh) c.visible = false; }); // oculta la enemiga procedural
             if (monaChinaEntity.userData.stasis) monaChinaEntity.userData.stasis.visible = true;
             monaChinaEntity.add(root);
@@ -1318,6 +1323,11 @@
             girlState = setClip(girlMixer, girlActions, null, 'Idle', { fade: 0 });
             monaChinaEntity.visible = true;
             monaChinaEntity.position.set(playerGroup.position.x + GIRL_SIDE_DIST, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
+            // El GLB tiene el origen en su CENTRO: sin este ajuste la chica queda
+            // medio hundida en el suelo y se ve diminuta (solo se ve la mitad).
+            monaChinaEntity.updateMatrixWorld(true);
+            const feetBox = new THREE.Box3().setFromObject(root);
+            root.position.y += monaChinaEntity.position.y - feetBox.min.y;
             console.log('Chica cargada: ' + gltf.animations.length + ' animaciones (' + Object.keys(girlActions).join(', ') + ')');
         }
 
@@ -2011,7 +2021,7 @@
             updateCameraStatusLabel();
 
             gameState.currentNodeIndex = 0;
-            gameState.timeLeft = 360;
+            gameState.timeLeft = 300;
             gameState.isPlaying = true;
             gameState.isPaused = false;
             gameState.score = 0;
