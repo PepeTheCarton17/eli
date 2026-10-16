@@ -18,7 +18,8 @@
 window.BackroomsMap = {
     URL: 'assets/backrooms/scene.gltf',
     SCALE: 6.0,      // 1 unidad del modelo -> 6 unidades del juego (techo ~16, igual que el mapa clasico)
-    CELL: 1.0,       // resolucion de rasterizado en unidades del modelo
+    CELL: 1.0,       // rasterizado GRUESO: alcanzabilidad, puertas y coleccionables
+    COLLIDE_CELL: 0.125, // rasterizado FINO: muros reales de colision (grosor ~0.75 uds)
 
     ready: false,
     failed: false,
@@ -64,7 +65,35 @@ window.BackroomsMap = {
         root.updateMatrixWorld(true);
         const box = new THREE.Box3().setFromObject(root);
         const minX = box.min.x, maxX = box.max.x, minZ = box.min.z, maxZ = box.max.z;
-        const cell = this.CELL;
+        this._box = { minX, maxX, minZ, maxZ };
+        const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+        this.center = { x: cx, z: cz };
+
+        // Rejilla "de juego" (gruesa): alcanzabilidad, puertas y coleccionables.
+        this.grid = this._rasterize(this.CELL, root, minX, maxX, minZ, maxZ);
+        // Rejilla FINA: define los muros REALES de colision. Antes se usaba la
+        // rejilla gruesa (1 ud del modelo = 6 uds del juego), asi que cada muro
+        // quedaba de 6 uds de grosor y taponaba los pasillos: el mapa parecia
+        // diminuto y habia zonas inaccesibles. Los muros del modelo son planos de
+        // grosor cero, por lo que la rejilla fina los deja finos (~0.75 uds).
+        this.collideGrid = this._rasterize(this.COLLIDE_CELL, root, minX, maxX, minZ, maxZ);
+
+        const S = this.SCALE;
+        this.bounds = {
+            minX: (minX - cx) * S, maxX: (maxX - cx) * S,
+            minZ: (minZ - cz) * S, maxZ: (maxZ - cz) * S,
+            w: (maxX - minX) * S, d: (maxZ - minZ) * S,
+            ceil: (box.max.y - box.min.y) * S
+        };
+
+        // Celda de aparicion = punto (0,0) del mundo -> centro del modelo.
+        this.spawnCell = this.cellAt(cx, cz);
+        this._computeReach();
+    },
+
+    // Rasteriza los muros verticales del modelo sobre una rejilla 2D de la
+    // resolucion pedida. Devuelve { w, h, cell, minX, minZ, data }.
+    _rasterize(cell, root, minX, maxX, minZ, maxZ) {
         const w = Math.max(1, Math.ceil((maxX - minX) / cell));
         const h = Math.max(1, Math.ceil((maxZ - minZ) / cell));
         const data = new Uint8Array(w * h);
@@ -110,21 +139,7 @@ window.BackroomsMap = {
         for (let ix = 0; ix < w; ix++) { data[ix] = 1; data[(h - 1) * w + ix] = 1; }
         for (let iz = 0; iz < h; iz++) { data[iz * w] = 1; data[iz * w + (w - 1)] = 1; }
 
-        this.grid = { w, h, cell, minX, minZ, data };
-        const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
-        this.center = { x: cx, z: cz };
-
-        const S = this.SCALE;
-        this.bounds = {
-            minX: (minX - cx) * S, maxX: (maxX - cx) * S,
-            minZ: (minZ - cz) * S, maxZ: (maxZ - cz) * S,
-            w: (maxX - minX) * S, d: (maxZ - minZ) * S,
-            ceil: (box.max.y - box.min.y) * S
-        };
-
-        // Celda de aparicion = punto (0,0) del mundo -> centro del modelo.
-        this.spawnCell = this.cellAt(cx, cz);
-        this._computeReach();
+        return { w, h, cell, minX, minZ, data };
     },
 
     cellAt(modelX, modelZ) {
@@ -223,21 +238,37 @@ window.BackroomsMap = {
         });
         group.add(clone);
 
-        // Colisiones: fusionar cada fila de celdas-muro en tiradas horizontales.
-        const g = this.grid;
+        // Colisiones: se construyen desde la rejilla FINA (muros finos, ~0.75 uds).
+        // Se fusionan las celdas-muro en el mayor rectangulo posible para que el
+        // numero de obstaculos sea pequeño y checkCollision siga siendo barato.
+        const g = this.collideGrid || this.grid;
         if (registerObstacle) {
+            const used = new Uint8Array(g.w * g.h);
             for (let iz = 0; iz < g.h; iz++) {
-                let ix = 0;
-                while (ix < g.w) {
-                    if (g.data[iz * g.w + ix] === 0) { ix++; continue; }
+                for (let ix = 0; ix < g.w; ix++) {
+                    const i0 = iz * g.w + ix;
+                    if (g.data[i0] === 0 || used[i0]) continue;
+                    // ancho maximo en esta fila
                     let jx = ix;
-                    while (jx + 1 < g.w && g.data[iz * g.w + (jx + 1)] === 1) jx++;
-                    const x0 = (g.minX + ix * g.cell - this.center.x) * S;
-                    const x1 = (g.minX + (jx + 1) * g.cell - this.center.x) * S;
-                    const z0 = (g.minZ + iz * g.cell - this.center.z) * S;
-                    const z1 = (g.minZ + (iz + 1) * g.cell - this.center.z) * S;
-                    registerObstacle(x0, z0, x1, z1);
-                    ix = jx + 1;
+                    while (jx + 1 < g.w && g.data[iz * g.w + (jx + 1)] === 1 && !used[iz * g.w + (jx + 1)]) jx++;
+                    // alto maximo (mismas columnas)
+                    let jz = iz;
+                    grow: while (jz + 1 < g.h) {
+                        for (let x = ix; x <= jx; x++) {
+                            const k = (jz + 1) * g.w + x;
+                            if (g.data[k] === 0 || used[k]) break grow;
+                        }
+                        jz++;
+                    }
+                    for (let z = iz; z <= jz; z++)
+                        for (let x = ix; x <= jx; x++) used[z * g.w + x] = 1;
+
+                    registerObstacle(
+                        (g.minX + ix * g.cell - this.center.x) * S,
+                        (g.minZ + iz * g.cell - this.center.z) * S,
+                        (g.minX + (jx + 1) * g.cell - this.center.x) * S,
+                        (g.minZ + (jz + 1) * g.cell - this.center.z) * S
+                    );
                 }
             }
         }
