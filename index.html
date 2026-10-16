@@ -1215,6 +1215,9 @@
         let cameraYaw = 0;
         let cameraPitch = 0.22;
         let cameraDistance = 16.0;
+        // La cámara de 3ª persona se pasa sola a la vista "normal" (1ª persona)
+        // cuando no cabe detrás del jugador sin meterse en un muro.
+        let camForcedFirst = false;
 
         const inputKeys = {
             w: false, a: false, s: false, d: false,
@@ -1225,7 +1228,7 @@
         // ==================== MODELOS GLB 3D (ROBOT = JUGADOR / CHICA = SEGUIDORA) ====================
         // Altura real de cada GLB (m) y altura objetivo en unidades del juego.
         const MODEL_SRC_H = { robot: 0.90, character: 1.756 };
-        const MODEL_GAME_H = { robot: 4.8, character: 6.2 };
+        const MODEL_GAME_H = { robot: 4.8, character: 6.8 };
         const GIRL_FOLLOW_DIST = 3.0;   // distancia detrás del robot (punto de formación)
         const GIRL_SIDE_DIST = 3.0;     // desplazamiento lateral (ni pegada ni lejos, pero sin tapar la cámara)
         const GIRL_CATCH_DIST = 3.2;    // a esta distancia te golpea (cuando te persigue)
@@ -1308,12 +1311,13 @@
         function attachGirlModel(gltf) {
             const root = gltf.scene;
             root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
-            // Escalar según la altura REAL del modelo: el GLB no mide exactamente
-            // lo que declara MODEL_SRC_H, y de eso dependía su tamaño en escena.
-            root.updateMatrixWorld(true);
-            const rawBox = new THREE.Box3().setFromObject(root);
-            const rawH = Math.max(0.001, rawBox.max.y - rawBox.min.y);
-            root.scale.setScalar(MODEL_GAME_H.character / rawH);
+            // Escalar por la altura REAL del modelo YA POSADO. OJO: el personaje es
+            // "skinned" (121 huesos), así que Box3.setFromObject devuelve la pose de
+            // reposo y MIENTE (daba 2.03 en vez de ~1.756). MODEL_SRC_H.character ya
+            // es la altura real medida en la animación Idle. El origen del GLB cae
+            // en los pies, por lo que NO hay que desplazarlo en Y.
+            root.scale.setScalar(MODEL_GAME_H.character / MODEL_SRC_H.character);
+            root.position.y = 0;
             monaChinaEntity.children.forEach(c => { if (c.isMesh) c.visible = false; }); // oculta la enemiga procedural
             if (monaChinaEntity.userData.stasis) monaChinaEntity.userData.stasis.visible = true;
             monaChinaEntity.add(root);
@@ -1323,11 +1327,6 @@
             girlState = setClip(girlMixer, girlActions, null, 'Idle', { fade: 0 });
             monaChinaEntity.visible = true;
             monaChinaEntity.position.set(playerGroup.position.x + GIRL_SIDE_DIST, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
-            // El GLB tiene el origen en su CENTRO: sin este ajuste la chica queda
-            // medio hundida en el suelo y se ve diminuta (solo se ve la mitad).
-            monaChinaEntity.updateMatrixWorld(true);
-            const feetBox = new THREE.Box3().setFromObject(root);
-            root.position.y += monaChinaEntity.position.y - feetBox.min.y;
             console.log('Chica cargada: ' + gltf.animations.length + ' animaciones (' + Object.keys(girlActions).join(', ') + ')');
         }
 
@@ -2837,17 +2836,19 @@
         }
 
         // Distancia de cámara libre de muros: acorta la vista en 3ª persona para
-        // que no atraviese las paredes. Reutiliza las colisiones del nivel activo.
-        function safeCameraDistance(desired) {
-            const dx = Math.sin(cameraYaw), dz = Math.cos(cameraYaw);
-            const shX = Math.cos(cameraYaw) * 1.5, shZ = -Math.sin(cameraYaw) * 1.5;
-            const px = playerGroup.position.x, pz = playerGroup.position.z;
-            let best = 0.9;
-            for (let d = 0.9; d <= desired; d += 0.4) {
-                if (LevelManager.checkCollision(px + dx * d + shX, pz + dz * d + shZ, 0.35)) break;
-                best = d;
+        // que NUNCA atraviese las paredes. Avanza desde el hombro del jugador en
+        // la dirección de la cámara con paso fino y se detiene en el primer punto
+        // que toca un muro. Devuelve 0 si ni siquiera cabe detrás del jugador (en
+        // ese caso el llamador pasa a la vista "normal" en 1ª persona).
+        function safeCameraDistance(desired, ox, oz, dx, dz) {
+            const RADIUS = 0.6;   // margen extra para que el plano cercano no recorte el muro
+            const STEP = 0.25;
+            let free = 0;
+            for (let d = STEP; d <= desired; d += STEP) {
+                if (LevelManager.checkCollision(ox + dx * d, oz + dz * d, RADIUS)) break;
+                free = d;
             }
-            return best;
+            return free;
         }
 
         function updatePlayer(delta) {
@@ -2936,27 +2937,52 @@
                 playerGroup.userData.armR.rotation.x = 0;
             }
 
-            // Vista Panorámica Alejada sin mira sobre el personaje
+            // Vista panorámica con oclusión: la cámara nunca atraviesa muros. Si no
+            // cabe detrás del jugador, se pasa sola a la vista normal (1ª persona).
+            const camCrosshair = document.getElementById('crosshair');
             if (gameState.isThirdPerson) {
-                playerGroup.visible = true;
-                const camHeight = 5.6 + Math.sin(cameraPitch) * 5.2;
-                const shoulderOffsetX = Math.cos(cameraYaw) * 1.5;
-                const shoulderOffsetZ = -Math.sin(cameraYaw) * 1.5;
-                const camD = safeCameraDistance(cameraDistance);
+                const shoulderX = Math.cos(cameraYaw) * 1.5;
+                const shoulderZ = -Math.sin(cameraYaw) * 1.5;
+                const dirX = Math.sin(cameraYaw), dirZ = Math.cos(cameraYaw);
+                const ox = playerGroup.position.x + shoulderX;
+                const oz = playerGroup.position.z + shoulderZ;
 
-                camera.position.set(
-                    playerGroup.position.x + Math.sin(cameraYaw) * camD + shoulderOffsetX,
-                    playerGroup.position.y + camHeight,
-                    playerGroup.position.z + Math.cos(cameraYaw) * camD + shoulderOffsetZ
-                );
-                camera.lookAt(
-                    playerGroup.position.x + shoulderOffsetX * 0.4,
-                    playerGroup.position.y + 2.5,
-                    playerGroup.position.z + shoulderOffsetZ * 0.4
-                );
+                const free = safeCameraDistance(cameraDistance, ox, oz, dirX, dirZ);
+                // Histéresis: evita parpadear entre 3ª y 1ª persona en los umbrales.
+                if (free < 2.0) camForcedFirst = true;
+                else if (free > 3.0) camForcedFirst = false;
+
+                if (camForcedFirst) {
+                    // Vista "normal": no hay hueco para la 3ª persona, así que nos
+                    // ponemos en los ojos del robot (sin atravesar nada).
+                    playerGroup.visible = false;
+                    if (camCrosshair) camCrosshair.style.display = 'block';
+                    camera.position.set(playerGroup.position.x, playerGroup.position.y + 4.2, playerGroup.position.z);
+                    camera.lookAt(
+                        camera.position.x - Math.sin(cameraYaw) * Math.cos(cameraPitch),
+                        camera.position.y + Math.sin(cameraPitch),
+                        camera.position.z - Math.cos(cameraYaw) * Math.cos(cameraPitch)
+                    );
+                } else {
+                    playerGroup.visible = true;
+                    if (camCrosshair) camCrosshair.style.display = 'none';
+                    const camHeight = 5.6 + Math.sin(cameraPitch) * 5.2;
+                    camera.position.set(
+                        ox + dirX * free,
+                        playerGroup.position.y + camHeight,
+                        oz + dirZ * free
+                    );
+                    camera.lookAt(
+                        playerGroup.position.x + shoulderX * 0.4,
+                        playerGroup.position.y + 2.5,
+                        playerGroup.position.z + shoulderZ * 0.4
+                    );
+                }
             } else {
                 // Primera persona: ocultamos el modelo para no ver su interior
+                camForcedFirst = false;
                 playerGroup.visible = false;
+                if (camCrosshair) camCrosshair.style.display = 'block';
                 camera.position.set(playerGroup.position.x, playerGroup.position.y + 4.2, playerGroup.position.z);
                 const target = new THREE.Vector3(
                     camera.position.x - Math.sin(cameraYaw) * Math.cos(cameraPitch),
