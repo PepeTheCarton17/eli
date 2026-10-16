@@ -38,8 +38,70 @@ window.Level2_FNAF = {
         beaconMesh: null
     },
 
-    buildMap(scene, registerWall) {
+    buildMap(scene, registerWall, registerObstacle) {
         const group = new THREE.Group();
+
+        // ================================================================
+        // MAPA DESDE MODELO glTF: pizzería real de la película FNAF
+        // (Sketchfab). Si no está cargado, se usa el mapa procedural de abajo.
+        // ================================================================
+        if (window.PizzeriaMap && window.PizzeriaMap.ready && registerObstacle) {
+            const model = window.PizzeriaMap.buildGroup(registerObstacle);
+            if (model) {
+                group.add(model);
+                const P = window.PizzeriaMap;
+                const B = P.bounds;
+
+                // Puertas (testimonio/alucinación) sobre celdas alcanzables.
+                let row = P.bestRowNear(2, 6);
+                if (row == null) row = P.bestRowNear(6, 16);
+                const cells = (row != null) ? P.pickCellsInRow(row, [0.2, 0.8]) : null;
+                if (cells && cells.length === 2) {
+                    const t = P.worldOfCell(cells[0].ix, cells[0].iz);
+                    const h = P.worldOfCell(cells[1].ix, cells[1].iz);
+                    this.doors.truth = { x: t.x, y: 0, z: t.z };
+                    this.doors.hallucination = { x: h.x, y: 0, z: h.z };
+                }
+
+                // Sala de Seguridad: la celda alcanzable MÁS LEJANA de la
+                // aparición (hay que cruzar la pizzería para refugiarse).
+                const far = P.farthestReachableCell();
+                if (far) {
+                    const w = P.worldOfCell(far.ix, far.iz);
+                    this.securityOffice.x = w.x;
+                    this.securityOffice.z = w.z;
+                }
+                this.doors.teleportTarget = { x: B.minX + 20, y: 0, z: B.minZ + 20 };
+
+                // Los coleccionables solo aparecen dentro de la pizzería.
+                this.collectibleBounds = {
+                    minX: B.minX + 12, maxX: B.maxX - 12,
+                    minZ: B.minZ + 12, maxZ: B.maxZ - 12
+                };
+                this._usesModel = true;
+
+                // Sala de Seguridad (sin muros extra: el modelo ya trae los suyos).
+                this._buildSecurityOffice(group, null);
+
+                // Iluminación teatral + neón FNAF.
+                const fnafRedLight = new THREE.PointLight(0xff0044, 1.6, 120, 1.8);
+                fnafRedLight.position.set(0, 22, -30);
+                group.add(fnafRedLight);
+
+                const secCyanLight = new THREE.PointLight(0x00f3ff, 1.4, 75, 1.8);
+                secCyanLight.position.set(this.securityOffice.x, 14, this.securityOffice.z);
+                group.add(secCyanLight);
+
+                scene.add(group);
+                return group;
+            }
+        }
+        this._usesModel = false;
+        this.collectibleBounds = null;
+
+        // ================================================================
+        // MAPA PROCEDURAL (respaldo)
+        // ================================================================
 
         // 1. Suelo Ajedrezado FNAF con Reflejo Especular PBR RTX
         const chessCanvas = document.createElement('canvas');
@@ -138,66 +200,8 @@ window.Level2_FNAF = {
             registerWall(tx, tz, 16, 8, tableMat, group);
         });
 
-        // 6. SALA DE SEGURIDAD FNAF (Security Office en x: 100, z: 70)
-        const secWallMat = new THREE.MeshStandardMaterial({ color: 0x202636, metalness: 0.5, roughness: 0.4 });
-        registerWall(this.securityOffice.x, this.securityOffice.z - 16, 36, 2, secWallMat, group);
-        registerWall(this.securityOffice.x, this.securityOffice.z + 16, 36, 2, secWallMat, group);
-        registerWall(this.securityOffice.x + 18, this.securityOffice.z, 2, 34, secWallMat, group);
-
-        // Puerta Blindada Deslizante de Acero Reforzado
-        const secDoorGeo = new THREE.BoxGeometry(2, 14, 16);
-        const secDoorMat = new THREE.MeshStandardMaterial({ 
-            color: 0xdd1122, 
-            emissive: 0x440505,
-            metalness: 0.85, 
-            roughness: 0.25 
-        });
-        this.securityOffice.doorMesh = new THREE.Mesh(secDoorGeo, secDoorMat);
-        this.securityOffice.doorMesh.position.set(this.securityOffice.x - 17, 7, this.securityOffice.z);
-        this.securityOffice.doorMesh.castShadow = true;
-        this.securityOffice.doorMesh.receiveShadow = true;
-        group.add(this.securityOffice.doorMesh);
-
-        // Faro Baliza de Emergencia sobre la Sala de Seguridad
-        const beaconGeo = new THREE.CylinderGeometry(1.5, 1.5, 180, 16);
-        const beaconMat = new THREE.MeshStandardMaterial({
-            color: 0xff2222,
-            emissive: 0xff0000,
-            emissiveIntensity: 1.6,
-            transparent: true,
-            opacity: 0.45
-        });
-        this.securityOffice.beaconMesh = new THREE.Mesh(beaconGeo, beaconMat);
-        this.securityOffice.beaconMesh.position.set(this.securityOffice.x, 90, this.securityOffice.z);
-        group.add(this.securityOffice.beaconMesh);
-
-        // Cartel luminoso "SECURITY ROOM"
-        const secSign = new THREE.Mesh(
-            new THREE.BoxGeometry(16, 2.5, 1),
-            new THREE.MeshStandardMaterial({ color: 0x00f3ff, emissive: 0x00f3ff, emissiveIntensity: 1.4 })
-        );
-        secSign.position.set(this.securityOffice.x - 17, 15, this.securityOffice.z);
-        group.add(secSign);
-
-        // Mesa de monitores y ventilador
-        const desk = new THREE.Mesh(
-            new THREE.BoxGeometry(8, 3, 18),
-            new THREE.MeshStandardMaterial({ color: 0x22222a, roughness: 0.7 })
-        );
-        desk.position.set(this.securityOffice.x + 8, 1.5, this.securityOffice.z);
-        desk.castShadow = true;
-        group.add(desk);
-
-        const monitors = new THREE.Mesh(
-            new THREE.BoxGeometry(1.5, 3.2, 8),
-            new THREE.MeshStandardMaterial({ 
-                color: 0x00f3ff, 
-                emissive: 0x00d4ff, 
-                emissiveIntensity: 1.2 
-            })
-        );
-        monitors.position.set(this.securityOffice.x + 7.5, 4.6, this.securityOffice.z);
-        group.add(monitors);
+        // 6. SALA DE SEGURIDAD FNAF
+        this._buildSecurityOffice(group, registerWall);
 
         // 7. Iluminación Teatral y Neón FNAF
         const fnafRedLight = new THREE.PointLight(0xff0044, 1.8, 85, 1.8);
@@ -211,6 +215,83 @@ window.Level2_FNAF = {
 
         scene.add(group);
         return group;
+    },
+
+    // Punto de aparición del mapa (el centro libre de la pizzería si se usa el
+    // modelo; si no, el (0,0,0) clásico del nivel procedural).
+    getSpawnPoint() {
+        if (this._usesModel && window.PizzeriaMap && window.PizzeriaMap.spawnCell) {
+            const w = window.PizzeriaMap.worldOfCell(
+                window.PizzeriaMap.spawnCell.ix, window.PizzeriaMap.spawnCell.iz);
+            return { x: w.x, z: w.z };
+        }
+        return { x: 0, z: 0 };
+    },
+
+    // Sala de Seguridad: muros (solo en el mapa procedural), puerta blindada,
+    // baliza, cartel y mesa de monitores. En el mapa-modelo se omite el muro.
+    _buildSecurityOffice(group, registerWall) {
+        const o = this.securityOffice;
+
+        if (registerWall) {
+            const secWallMat = new THREE.MeshStandardMaterial({ color: 0x202636, metalness: 0.5, roughness: 0.4 });
+            registerWall(o.x, o.z - 16, 36, 2, secWallMat, group);
+            registerWall(o.x, o.z + 16, 36, 2, secWallMat, group);
+            registerWall(o.x + 18, o.z, 2, 34, secWallMat, group);
+        }
+
+        // Puerta Blindada Deslizante de Acero Reforzado
+        const secDoorMat = new THREE.MeshStandardMaterial({
+            color: 0xdd1122,
+            emissive: 0x440505,
+            metalness: 0.85,
+            roughness: 0.25
+        });
+        o.doorMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 14, 16), secDoorMat);
+        o.doorMesh.position.set(o.x - 17, 7, o.z);
+        o.doorMesh.castShadow = true;
+        o.doorMesh.receiveShadow = true;
+        group.add(o.doorMesh);
+
+        // Faro Baliza de Emergencia sobre la Sala de Seguridad
+        const beaconMat = new THREE.MeshStandardMaterial({
+            color: 0xff2222,
+            emissive: 0xff0000,
+            emissiveIntensity: 1.6,
+            transparent: true,
+            opacity: 0.45
+        });
+        o.beaconMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 180, 16), beaconMat);
+        o.beaconMesh.position.set(o.x, 90, o.z);
+        group.add(o.beaconMesh);
+
+        // Cartel luminoso "SECURITY ROOM"
+        const secSign = new THREE.Mesh(
+            new THREE.BoxGeometry(16, 2.5, 1),
+            new THREE.MeshStandardMaterial({ color: 0x00f3ff, emissive: 0x00f3ff, emissiveIntensity: 1.4 })
+        );
+        secSign.position.set(o.x - 17, 15, o.z);
+        group.add(secSign);
+
+        // Mesa de monitores y ventilador
+        const desk = new THREE.Mesh(
+            new THREE.BoxGeometry(8, 3, 18),
+            new THREE.MeshStandardMaterial({ color: 0x22222a, roughness: 0.7 })
+        );
+        desk.position.set(o.x + 8, 1.5, o.z);
+        desk.castShadow = true;
+        group.add(desk);
+
+        const monitors = new THREE.Mesh(
+            new THREE.BoxGeometry(1.5, 3.2, 8),
+            new THREE.MeshStandardMaterial({
+                color: 0x00f3ff,
+                emissive: 0x00d4ff,
+                emissiveIntensity: 1.2
+            })
+        );
+        monitors.position.set(o.x + 7.5, 4.6, o.z);
+        group.add(monitors);
     },
 
     // IA Animatrónica FNAF: Persecución sinusoidal (Tsundere / Zig-zag)

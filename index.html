@@ -28,6 +28,7 @@
     <script defer src="levels/level6_testimonial_justice.js"></script>
     <script defer src="levels/levelManager.js"></script>
     <script defer src="levels/backrooms_map.js"></script>
+    <script defer src="levels/pizzeria_map.js"></script>
     <!-- Modelos GLB (meshopt). El glTF en base64 (1.6 MB) ya NO se carga al
          inicio: solo se descarga como respaldo si el .glb falla (p.ej. file://). -->
     <script defer src="https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_decoder.js"></script>
@@ -1712,6 +1713,9 @@
             // Mapa estructurado de Backrooms (glTF). Si falla, el Nivel 1
             // usa automáticamente su mapa procedural clásico.
             if (window.BackroomsMap) window.BackroomsMap.load();
+            // Mapa estructurado de la pizzería FNAF (glTF). Si falla, el Nivel 2
+            // usa automáticamente su mapa procedural clásico.
+            if (window.PizzeriaMap) window.PizzeriaMap.load();
             // Asegurar que la retícula esté oculta en 3ra persona de entrada
             document.getElementById('crosshair').style.display = 'none';
 
@@ -2217,6 +2221,17 @@
 
             LevelManager.loadLevel(gameState.currentNodeIndex, scene, dirLight, ambientLight);
 
+            // Si el nivel define un punto de aparición propio (mapas desde
+            // modelo), el jugador arranca ahí en lugar del (0,0,0) genérico.
+            const lvl = LevelManager.getCurrentLevel();
+            if (lvl && typeof lvl.getSpawnPoint === 'function') {
+                const sp = lvl.getSpawnPoint();
+                if (sp) {
+                    playerGroup.position.set(sp.x, 0, sp.z);
+                    playerVelocity.set(0, 0, 0);
+                }
+            }
+
             doorTruthGroup.visible = true;
             doorHallucinationGroup.visible = true;
             skyBeamTruth.visible = true;
@@ -2356,8 +2371,10 @@
 
                     showHUDNotification("¡ANIMATRÓNICOS ACTIVADOS! ¡CORRE A LA SALA DE SEGURIDAD!", true);
 
-                    freddyEntity.position.set(50, 0, 110);
-                    bonnieEntity.position.set(120, 0, -40);
+                    const fSpot = LevelManager.findFreeSpot(playerGroup.position.x, playerGroup.position.z, 26, 50, 2.5, 0, false);
+                    const bSpot = LevelManager.findFreeSpot(playerGroup.position.x, playerGroup.position.z, 26, 50, 2.5, Math.PI, false);
+                    freddyEntity.position.set(fSpot.x, 0, fSpot.z);
+                    bonnieEntity.position.set(bSpot.x, 0, bSpot.z);
                     freddyEntity.visible = true;
                     bonnieEntity.visible = true;
 
@@ -2481,20 +2498,28 @@
             gameState.modalActionPending = 'retry';
 
             // Tiempo de gracia y distanciamiento de seguridad: la chica aparece
-            // considerablemente lejos (es más rápida que el robot, así que da
-            // tiempo a escapar antes de que vuelva a alcanzarte).
+            // lejos (es más rápida que el robot), pero SIEMPRE en un punto libre
+            // DENTRO del mapa. Antes se colocaba en (jugador + 55, +55), que en
+            // el reintento podía caer FUERA del escenario (bug).
             gameState.enemyFrozenUntil = Date.now() + 4000;
+            const ax = playerGroup.position.x, az = playerGroup.position.z;
             if (monaChinaEntity && monaChinaEntity.visible) {
-                monaChinaEntity.position.set(
-                    playerGroup.position.x + GIRL_ESCAPE_DIST,
-                    0,
-                    playerGroup.position.z + GIRL_ESCAPE_DIST
-                );
+                const g = LevelManager.findFreeSpot(ax, az, GIRL_ESCAPE_DIST * 0.6, GIRL_ESCAPE_DIST, GIRL_RADIUS, 0, false);
+                monaChinaEntity.position.set(g.x, 0, g.z);
             }
-            if (freddyEntity && freddyEntity.visible) freddyEntity.position.set(50, 0, 110);
-            if (bonnieEntity && bonnieEntity.visible) bonnieEntity.position.set(120, 0, -40);
+            if (freddyEntity && freddyEntity.visible) {
+                const f = LevelManager.findFreeSpot(ax, az, 26, 50, 2.5, 0, false);
+                freddyEntity.position.set(f.x, 0, f.z);
+            }
+            if (bonnieEntity && bonnieEntity.visible) {
+                const bn = LevelManager.findFreeSpot(ax, az, 26, 50, 2.5, Math.PI, false);
+                bonnieEntity.position.set(bn.x, 0, bn.z);
+            }
 
-            playerGroup.position.set(0, 0, playerGroup.position.z + 15);
+            // El robot reaparece en un punto libre cercano (antes (0,0,z+15), que
+            // podía quedar dentro de un muro al reintentar).
+            const p = LevelManager.findFreeSpot(ax, az, 4, 14, 1.6);
+            playerGroup.position.set(p.x, 0, p.z);
             playerVelocity.set(0, 0, 0);
 
             modal.classList.remove('hidden');

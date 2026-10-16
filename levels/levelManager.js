@@ -110,6 +110,46 @@ window.LevelManager = {
         return false;
     },
 
+    // Punto libre (sin colisión) cerca de (x,z) buscando en anillos concéntricos.
+    // Sirve para recolocar al jugador, a la seguidora o a los animatrónicos
+    // SIEMPRE dentro del mapa (usa `collectibleBounds` si el nivel lo define) y
+    // sin quedar atrapados en un muro. Antes el reintento los ponía fuera.
+    //   keepIfFree = true  -> si (x,z) ya es válido, se devuelve tal cual (mover
+    //                         al jugador lo justo).
+    //   keepIfFree = false -> SIEMPRE busca a distancia [minDist,maxDist] (para
+    //                         colocar lejos a la chica/quien persigue, nunca
+    //                         encima del jugador).
+    findFreeSpot(x, z, minDist = 6, maxDist = 20, radius = 1.3, phase = 0, keepIfFree = true) {
+        const b = (this.getCurrentLevel() && this.getCurrentLevel().collectibleBounds) || null;
+        const inside = (px, pz) => !b || (px >= b.minX && px <= b.maxX && pz >= b.minZ && pz <= b.maxZ);
+        const free = (px, pz) => inside(px, pz) && !this.checkCollision(px, pz, radius);
+
+        if (keepIfFree && free(x, z)) return { x, z };
+
+        const rings = 26, per = 24;
+        // 1) Anillos de minDist a maxDist.
+        for (let r = 0; r < rings; r++) {
+            const d = minDist + (maxDist - minDist) * (r / (rings - 1));
+            for (let a = 0; a < per; a++) {
+                const ang = (a / per) * Math.PI * 2 + r * 0.35 + phase;
+                const px = x + Math.cos(ang) * d;
+                const pz = z + Math.sin(ang) * d;
+                if (free(px, pz)) return { x: px, z: pz };
+            }
+        }
+        // 2) Respaldo: si no hay hueco (p.ej. junto a una esquina), acercarse.
+        for (let r = 0; r < rings; r++) {
+            const d = Math.max(1.5, minDist) * (1 - r / rings);
+            for (let a = 0; a < per; a++) {
+                const ang = (a / per) * Math.PI * 2 + r * 0.35 + phase;
+                const px = x + Math.cos(ang) * d;
+                const pz = z + Math.sin(ang) * d;
+                if (free(px, pz)) return { x: px, z: pz };
+            }
+        }
+        return { x, z };
+    },
+
     // Generación de coleccionables en zonas transitables seguras (sin muros)
     spawnCollectibles(scene, count = 22) {
         this.collectibles.forEach(item => {
