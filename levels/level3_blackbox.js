@@ -192,22 +192,23 @@ window.Level3_Blackbox = {
             entity.lookAt(playerGroup.position.x, entity.position.y, playerGroup.position.z);
         } else {
             // El jugador le dio la espalda: ¡ACECHA A MÁXIMA VELOCIDAD!
+            // (Con navegación A*: rodea los muros en vez de atorarse.)
             entity.userData.stasis.material.opacity = 0;
-            entity.lookAt(playerGroup.position.x, entity.position.y, playerGroup.position.z);
-            
             const sprintSpeed = 22.0; // Velocidad de pesadilla
-            const moveDir = playerGroup.position.clone().sub(entity.position).normalize();
-            entity.position.addScaledVector(moveDir, sprintSpeed * delta);
+            LevelManager.moveAgentToward(entity, playerGroup.position.x, playerGroup.position.z,
+                sprintSpeed * delta, entity.userData.navRadius || 1.2);
 
             // Probabilidad de teletransporte instantáneo justo detrás si lleva tiempo sin ser visto
             const now = performance.now();
             if (now - this.lastTeleportCheck > 3500 && dist > 25) {
                 this.lastTeleportCheck = now;
                 if (Math.random() < 0.45) {
-                    // Teletransportar a 12 unidades detrás de la cámara del jugador
+                    // Teletransportar a 12 unidades detrás de la cámara del
+                    // jugador, pero SIEMPRE en un punto libre (nunca dentro
+                    // de un muro: usaba la posición exacta, que podía chocar).
                     const behind = playerGroup.position.clone().sub(camDir.clone().multiplyScalar(12));
-                    entity.position.copy(behind);
-                    entity.position.y = 0;
+                    const spot = LevelManager.findFreeSpot(behind.x, behind.z, 0, 14, entity.userData.navRadius || 1.2);
+                    entity.position.set(spot.x, 0, spot.z);
                 }
             }
         }

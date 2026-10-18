@@ -346,34 +346,49 @@ window.PizzeriaMap = {
         return { ix, iz };
     },
 
-    // Etiqueta las componentes conectadas del espacio libre, elige la MAYOR y
-    // fija la aparición en la celda de esa componente más próxima al centro del
-    // edificio. Así el jugador nunca aparece encerrado en una sala minúscula y
-    // el área jugable (y la Sala de Seguridad) es la mayor posible.
+    // Etiqueta las componentes conectadas del espacio libre, elige la zona
+    // jugable y fija la aparición en su celda más próxima al centro del
+    // edificio. Zona jugable = la MAYOR componente INTERIOR (la que NO toca el
+    // borde del recuadro). El modelo de la pizzería trae apacalcamiento/calle
+    // alrededor de la casa: esa área exterior es mayor que la casa, y con la
+    // lógica antigua (mayor componente a secas) el jugador, las puertas y la
+    // Sala de Seguridad aparecían "fuera de la casa". Si TODO el espacio libre
+    // toca el borde (edificio pegado al recuadro), se usa la mayor componente
+    // a secas como antes.
     _computeReach() {
         const g = this.grid, W = g.w, H = g.h, data = g.data, N = W * H;
         const comp = new Int32Array(N).fill(-1);
         const sizes = [];
+        const borderOf = [];
         const q = [];
         for (let i = 0; i < N; i++) {
             if (data[i] === 1 || comp[i] !== -1) continue;
             const id = sizes.length;
-            let n = 0;
+            let n = 0, border = false;
             comp[i] = id; q.push(i);
             while (q.length) {
                 const k = q.pop(); n++;
                 const ix = k % W, iz = (k - ix) / W;
+                if (ix <= 1 || iz <= 1 || ix >= W - 2 || iz >= H - 2) border = true;
                 if (ix > 0)     { const j = k - 1; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
                 if (ix < W - 1) { const j = k + 1; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
                 if (iz > 0)     { const j = k - W; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
                 if (iz < H - 1) { const j = k + W; if (data[j] === 0 && comp[j] === -1) { comp[j] = id; q.push(j); } }
             }
             sizes.push(n);
+            borderOf.push(border);
         }
         if (!sizes.length) { this.reach = null; this.reachCount = 0; return; }
 
-        let big = 0;
-        for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[big]) big = i;
+        let big = -1;
+        for (let i = 0; i < sizes.length; i++) {
+            if (borderOf[i]) continue;
+            if (big < 0 || sizes[i] > sizes[big]) big = i;
+        }
+        if (big < 0) {
+            big = 0;
+            for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[big]) big = i;
+        }
 
         // Aparición: celda de la mayor componente más cercana a la preferida.
         const pref = this.spawnCell || { ix: W >> 1, iz: H >> 1 };
@@ -394,12 +409,26 @@ window.PizzeriaMap = {
     },
 
     // Dos celdas libres y alcanzables dentro de una fila (para las puertas).
-    pickCellsInRow(iz, fracs) {
+    // `avoid` (opcional) es una lista de { x, z, r } en unidades de juego: las
+    // celdas a menos de `r` de esos puntos se descartan (p.ej. la Sala de
+    // Seguridad, para no superponer puertas con el refugio).
+    pickCellsInRow(iz, fracs, avoid = null) {
         const g = this.grid;
         if (iz < 0 || iz >= g.h) return null;
         const cells = [];
-        for (let ix = 0; ix < g.w; ix++) if (!this.isWall(ix, iz) && this.isReachable(ix, iz)) cells.push(ix);
-        if (!cells.length) return null;
+        for (let ix = 0; ix < g.w; ix++) {
+            if (this.isWall(ix, iz) || !this.isReachable(ix, iz)) continue;
+            if (avoid && avoid.length) {
+                const w = this.worldOfCell(ix, iz);
+                let bad = false;
+                for (const a of avoid) {
+                    if (Math.hypot(w.x - a.x, w.z - a.z) < a.r) { bad = true; break; }
+                }
+                if (bad) continue;
+            }
+            cells.push(ix);
+        }
+        if (cells.length < 2) return null;
         return fracs.map(f => {
             const i = Math.max(0, Math.min(cells.length - 1, Math.round((cells.length - 1) * f)));
             return { ix: cells[i], iz };
@@ -416,6 +445,40 @@ window.PizzeriaMap = {
             if (n > bestN) { bestN = n; best = iz; }
         }
         return best;
+    },
+
+    // Fila (índice iz) con más celdas alcanzables y ALEJADA de la aparición
+    // (>= minDist filas de distancia). Para las puertas: estaban en el borde
+    // del recuadro — ¡el aparcamiento de fuera de casa!
+    bestRowAwayFrom(spIz, minDist) {
+        const g = this.grid;
+        let best = null, bestN = -1;
+        for (let iz = 0; iz < g.h; iz++) {
+            if (Math.abs(iz - spIz) < minDist) continue;
+            let n = 0;
+            for (let ix = 0; ix < g.w; ix++) if (!this.isWall(ix, iz) && this.isReachable(ix, iz)) n++;
+            if (n >= 2 && n > bestN) { bestN = n; best = iz; }
+        }
+        if (best == null && minDist > 0) {
+            return this.bestRowAwayFrom(spIz, minDist > 2 ? Math.floor(minDist / 2) : 0);
+        }
+        return best;
+    },
+
+    // Filas con >= minCells celdas alcanzables, ordenadas por DISTANCIA a la
+    // fila spIz (mayor primero). Útil para puertas: probar la fila más lejana
+    // VÁLIDA en vez de la más cercana o la más densa.
+    rowsAwayFrom(spIz, minDist = 0, minCells = 2) {
+        const g = this.grid;
+        const rows = [];
+        for (let iz = 0; iz < g.h; iz++) {
+            if (Math.abs(iz - spIz) < minDist) continue;
+            let n = 0;
+            for (let ix = 0; ix < g.w; ix++) if (!this.isWall(ix, iz) && this.isReachable(ix, iz)) n++;
+            if (n >= minCells) rows.push(iz);
+        }
+        rows.sort((a, b) => Math.abs(b - spIz) - Math.abs(a - spIz));
+        return rows;
     },
 
     // Celda alcanzable más lejana de la aparición (para la Sala de Seguridad).
@@ -499,6 +562,32 @@ window.PizzeriaMap = {
                         (g.minX + (jx + 1) * g.cell - this.center.x) * S,
                         (g.minZ + (jz + 1) * g.cell - this.center.z) * S
                     );
+                }
+            }
+
+            // Zona exterior sellada: las celdas FUERA de la zona jugable (el
+            // apacalcamiento/calle alrededor de la casa, mayor que ella) se
+            // registran como obstáculos. Así el motor de navegación del
+            // LevelManager (aparición segura, animatrónicos, coleccionables,
+            // puertas) solo ve LA CASA y nadie puede quedar "fuera del mapa".
+            // Se fusionan por filas: muy pocos rectángulos.
+            if (this.reach) {
+                const cg = this.grid;
+                for (let iz = 0; iz < cg.h; iz++) {
+                    let runStart = -1;
+                    for (let ix = 0; ix <= cg.w; ix++) {
+                        const blocked = ix < cg.w && this.reach[iz * cg.w + ix] !== 1;
+                        if (blocked && runStart < 0) runStart = ix;
+                        if (!blocked && runStart >= 0) {
+                            registerObstacle(
+                                (cg.minX + runStart * cg.cell - this.center.x) * S,
+                                (cg.minZ + iz * cg.cell - this.center.z) * S,
+                                (cg.minX + ix * cg.cell - this.center.x) * S,
+                                (cg.minZ + (iz + 1) * cg.cell - this.center.z) * S
+                            );
+                            runStart = -1;
+                        }
+                    }
                 }
             }
         }

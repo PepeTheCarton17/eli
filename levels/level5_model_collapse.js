@@ -122,18 +122,16 @@ window.Level5_ModelCollapse = {
     updateEnemy(entity, targetPos, delta) {
         if (!entity || !entity.visible) return;
         entity.userData.stasis.material.opacity = 0;
-        entity.lookAt(targetPos.x, entity.position.y, targetPos.z);
-        const dir = new THREE.Vector3();
-        entity.getWorldDirection(dir);
-        dir.normalize();
 
-        // Velocidad con saltos cuánticos repentinos (glitch dash)
+        // Velocidad con saltos cuánticos repentinos (glitch dash), pero
+        // rodeando muros con A* (antes: línea recta y se atoraba).
         const now = performance.now();
         let speed = 15.0;
         if (now - this.lastGlitchDash > 2200) {
             this.lastGlitchDash = now;
             speed = 38.0; // Impulso brusco de glitch
         }
-        entity.position.addScaledVector(dir, speed * delta);
+        LevelManager.moveAgentToward(entity, targetPos.x, targetPos.z,
+            speed * delta, entity.userData.navRadius || 1.2);
     }
 };

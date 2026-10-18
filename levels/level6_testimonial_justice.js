@@ -122,10 +122,8 @@ window.Level6_TestimonialJustice = {
     updateEnemy(entity, targetPos, delta) {
         if (!entity || !entity.visible) return;
         entity.userData.stasis.material.opacity = 0;
-        entity.lookAt(targetPos.x, entity.position.y, targetPos.z);
-        const dir = new THREE.Vector3();
-        entity.getWorldDirection(dir);
-        dir.normalize();
-        entity.position.addScaledVector(dir, 17.5 * delta);
+        // Persecución con navegación A*: rodea los muros en vez de línea recta.
+        LevelManager.moveAgentToward(entity, targetPos.x, targetPos.z,
+            17.5 * delta, entity.userData.navRadius || 1.2);
     }
 };

@@ -130,13 +130,11 @@ window.Level4_StochasticParrots = {
     updateEnemy(entity, targetPos, delta) {
         if (!entity || !entity.visible) return;
         entity.userData.stasis.material.opacity = 0;
-        entity.lookAt(targetPos.x, entity.position.y, targetPos.z);
-        const dir = new THREE.Vector3();
-        entity.getWorldDirection(dir);
-        dir.normalize();
 
-        // Movimiento flotante espectral
-        entity.position.addScaledVector(dir, 16.5 * delta);
+        // Movimiento flotante espectral, pero rodeando muros (A* + steering)
+        // en vez de línea recta (se atoraba contra las paredes).
+        LevelManager.moveAgentToward(entity, targetPos.x, targetPos.z,
+            16.5 * delta, entity.userData.navRadius || 1.2);
         entity.position.y = Math.sin(performance.now() * 0.006) * 0.6;
     }
 };

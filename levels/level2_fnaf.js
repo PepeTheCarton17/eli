@@ -52,17 +52,6 @@ window.Level2_FNAF = {
                 const P = window.PizzeriaMap;
                 const B = P.bounds;
 
-                // Puertas (testimonio/alucinación) sobre celdas alcanzables.
-                let row = P.bestRowNear(2, 6);
-                if (row == null) row = P.bestRowNear(6, 16);
-                const cells = (row != null) ? P.pickCellsInRow(row, [0.2, 0.8]) : null;
-                if (cells && cells.length === 2) {
-                    const t = P.worldOfCell(cells[0].ix, cells[0].iz);
-                    const h = P.worldOfCell(cells[1].ix, cells[1].iz);
-                    this.doors.truth = { x: t.x, y: 0, z: t.z };
-                    this.doors.hallucination = { x: h.x, y: 0, z: h.z };
-                }
-
                 // Sala de Seguridad: la celda alcanzable MÁS LEJANA de la
                 // aparición (hay que cruzar la pizzería para refugiarse).
                 const far = P.farthestReachableCell();
@@ -70,6 +59,59 @@ window.Level2_FNAF = {
                     const w = P.worldOfCell(far.ix, far.iz);
                     this.securityOffice.x = w.x;
                     this.securityOffice.z = w.z;
+                }
+                // El centro devuelto por la celda gruesa puede caer dentro de
+                // un muro fino del modelo; se ajusta al punto libre cercano
+                // (el disparador de la puerta es por distancia, < 24, así que
+                // un pequeño desplazamiento no cambia la jugabilidad).
+                const officeSpot = LevelManager.findFreeSpot(
+                    this.securityOffice.x, this.securityOffice.z, 0, 18, 1.6);
+                this.securityOffice.x = officeSpot.x;
+                this.securityOffice.z = officeSpot.z;
+                // ...y que se pueda LLEGAR hasta ella desde la aparición: la
+                // celda más lejana a veces queda tras un pasillo más estrecho
+                // que el radio de navegación (1.6) y el refugio sería inútil.
+                const spawnW = P.worldOfCell(P.spawnCell.ix, P.spawnCell.iz);
+                const officeConn = LevelManager.findConnectedSpot(
+                    this.securityOffice.x, this.securityOffice.z, spawnW.x, spawnW.z, 1.6);
+                if (officeConn) {
+                    this.securityOffice.x = officeConn.x;
+                    this.securityOffice.z = officeConn.z;
+                }
+
+                // Puertas (testimonio/alucinación) sobre celdas alcanzables
+                // DENTRO de la casa y lejos de la aparición. Antes se buscaba
+                // en las filas 2..6 del borde del recuadro: ahí estaba el
+                // aparcamiento de FUERA y el jugador veía las puertas "en la
+                // calle" (y aparecía fuera del mapa). Se evita además la Sala
+                // de Seguridad para no superponer el refugio con una puerta.
+                // Puertas lo más lejos posible de la aparición Y SEPARADAS
+                // entre sí: su disparador es SOLO por proximidad (<14 uds) y
+                // si quedan juntas, una misma posición dispara las DOS a la
+                // vez (ganas y pierdes a la vez). Ninguna debe aparecer pegada
+                // a la aparición del jugador tampoco.
+                let cells = null;
+                const spW0 = P.worldOfCell(P.spawnCell.ix, P.spawnCell.iz);
+                for (const md of [40, 26, 0]) {
+                    for (const rz of P.rowsAwayFrom(P.spawnCell.iz, md, 4)) {
+                        const cc = P.pickCellsInRow(rz, [0.2, 0.8], [
+                            { x: this.securityOffice.x, z: this.securityOffice.z, r: 30 }
+                        ]);
+                        if (!cc || cc.length !== 2) continue;
+                        const t0 = P.worldOfCell(cc[0].ix, cc[0].iz);
+                        const h0 = P.worldOfCell(cc[1].ix, cc[1].iz);
+                        if (Math.hypot(t0.x - h0.x, t0.z - h0.z) < 32) continue;     // separadas entre sí
+                        if (Math.hypot(t0.x - spW0.x, t0.z - spW0.z) < 20) continue;  // lejos de la aparición
+                        if (Math.hypot(h0.x - spW0.x, h0.z - spW0.z) < 20) continue;
+                        cells = cc; break;
+                    }
+                    if (cells) break;
+                }
+                if (cells && cells.length === 2) {
+                    const t = P.worldOfCell(cells[0].ix, cells[0].iz);
+                    const h = P.worldOfCell(cells[1].ix, cells[1].iz);
+                    this.doors.truth = { x: t.x, y: 0, z: t.z };
+                    this.doors.hallucination = { x: h.x, y: 0, z: h.z };
                 }
                 this.doors.teleportTarget = { x: B.minX + 20, y: 0, z: B.minZ + 20 };
 
@@ -294,41 +336,69 @@ window.Level2_FNAF = {
         group.add(monitors);
     },
 
-    // IA Animatrónica FNAF: Persecución sinusoidal (Tsundere / Zig-zag)
+    // IA Animatrónica FNAF: PATRULLA lenta cerca de su puesto mientras el
+    // jugador explora; solo persiguen (zig-zag sinusoidal) tras fallar la puerta.
     updateAnimatronics(freddy, bonnie, targetPos, delta, time) {
         if (!freddy || !bonnie) return;
 
-        this._chaseSinusoidal(freddy, targetPos, freddy.userData.speed || 15.0, delta, time, 0);
+        if (gameState.fnafModeActive) {
+            this._chaseSinusoidal(freddy, targetPos, freddy.userData.speed || 15.0, delta, time, 0);
+            this._chaseSinusoidal(bonnie, targetPos, bonnie.userData.speed || 17.5, delta, time, Math.PI / 2);
+        } else {
+            // Patrulla: sin esto, plantados con su clíp idle 'Walk' (no tienen
+            // 'Idle'), parecía que "caminaban en el mismo sitio" sin moverse.
+            this._patrolAnimatronic(freddy, delta, time, 0.0);
+            this._patrolAnimatronic(bonnie, delta, time, 2.6);
+        }
+
         if (freddy.userData.jaw) {
             freddy.userData.jaw.position.y = 5.1 + Math.sin(time * 16.0) * 0.25;
         }
-
-        this._chaseSinusoidal(bonnie, targetPos, bonnie.userData.speed || 17.5, delta, time, Math.PI / 2);
         if (bonnie.userData.earL) {
             bonnie.userData.earL.rotation.z = Math.sin(time * 11.0) * 0.25;
             bonnie.userData.earR.rotation.z = -Math.sin(time * 11.0) * 0.25;
         }
 
-        // El modelo glTF de Foxy es ESTÁTICO (sin esqueleto): un ligero balanceo
-        // vertical/lateral le da sensación de marcha al perseguir.
-        freddy.position.y = Math.abs(Math.sin(time * 9.0)) * 0.35;
-        freddy.rotation.z = Math.sin(time * 9.0) * 0.03;
-        bonnie.position.y = Math.abs(Math.sin(time * 9.0 + 1.3)) * 0.35;
-        bonnie.rotation.z = -Math.sin(time * 9.0 + 1.3) * 0.03;
+        // Foxy lleva animacion real (subtitulo: idle/walk/run segun su velocidad).
+    },
+
+    // Patrulla: camina despacio hacia puntos LIBRES conectados con su "casa"
+    // (userData.home, fijada al colocarlos en el nivel). Elegimos puntos
+    // conectados para no quedar bloqueado contra un muro.
+    _patrolAnimatronic(ent, delta, time, phase) {
+        const home = ent.userData.home ||
+            (ent.userData.home = { x: ent.position.x, z: ent.position.z });
+        const nav = ent.userData.navRadius || 2.0;
+        let tgt = ent.userData.patrolTarget;
+        if (!tgt || time > (ent.userData.patrolUntil || 0) ||
+            Math.hypot(ent.position.x - tgt.x, ent.position.z - tgt.z) < 2.5) {
+            const s = LevelManager.findFreeSpot(home.x, home.z, 5, 34, nav, time * 0.37 + phase, false);
+            const c = LevelManager.findConnectedSpot(s.x, s.z, home.x, home.z, nav) ||
+                LevelManager.findConnectedSpot(s.x, s.z, ent.position.x, ent.position.z, nav) || s;
+            ent.userData.patrolTarget = tgt = { x: c.x, z: c.z };
+            ent.userData.patrolUntil = time + 6 + Math.abs(Math.sin(time + phase)) * 3;
+        }
+        LevelManager.moveAgentToward(ent, tgt.x, tgt.z, 4.2 * delta, nav);
     },
 
     _chaseSinusoidal(entity, target, speed, delta, time, phase) {
-        entity.lookAt(target.x, entity.position.y, target.z);
-        const dir = new THREE.Vector3();
-        entity.getWorldDirection(dir);
-        dir.normalize();
+        // Persecución con zig-zag, pero colision-aware: la dirección base sale
+        // del steering A* (rodea muros de la pizzería) y el zig-zag se aplica
+        // en perpendicular. Antes era línea recta pura y Foxy se atoraba
+        // contra el primer muro sin poder alcanzarte nunca.
+        const base = LevelManager.steerTo(entity, target.x, target.z, entity.userData.navRadius || 2.0);
+        if (!base.x && !base.z) return;
 
-        const perp = new THREE.Vector3(-dir.z, 0, dir.x);
-        const zigZag = Math.sin(time * 4.2 + phase) * 8.0;
+        const perpX = -base.z, perpZ = base.x;
+        const zigZag = Math.sin(time * 4.2 + phase) * 0.5;  // amplitud relativa
 
-        const moveVec = dir.clone().multiplyScalar(speed * delta)
-            .add(perp.clone().multiplyScalar(zigZag * delta));
-        
-        entity.position.add(moveVec);
+        let mx = base.x + perpX * zigZag;
+        let mz = base.z + perpZ * zigZag;
+        const len = Math.hypot(mx, mz) || 1;
+        mx /= len; mz /= len;
+
+        entity.rotation.y = Math.atan2(mx, mz);  // mira hacia donde se mueve
+        LevelManager.moveAgentBy(entity, mx * speed * delta, mz * speed * delta,
+            entity.userData.navRadius || 2.0);
     }
 };

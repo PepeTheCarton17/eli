@@ -184,11 +184,10 @@ window.Level1_Backrooms = {
     updateEnemy(entity, targetPos, delta) {
         if (!entity || !entity.visible) return;
         entity.userData.stasis.material.opacity = 0;
-        entity.lookAt(targetPos.x, entity.position.y, targetPos.z);
-        const dir = new THREE.Vector3();
-        entity.getWorldDirection(dir);
-        dir.normalize();
-        entity.position.addScaledVector(dir, entity.userData.speed * delta);
+        // Persecución con navegación A*: rodea los muros en vez de avanzar en
+        // línea recta y quedarse atorada contra la pared.
+        LevelManager.moveAgentToward(entity, targetPos.x, targetPos.z,
+            entity.userData.speed * delta, entity.userData.navRadius || 1.2);
 
         const time = performance.now() * 0.005;
         if (entity.userData.tailL) entity.userData.tailL.rotation.x = Math.sin(time * 3.0) * 0.4;

@@ -1235,8 +1235,8 @@
         // Altura real de cada GLB (m) y altura objetivo en unidades del juego.
         const MODEL_SRC_H = { robot: 0.90, character: 1.756 };
         const MODEL_GAME_H = { robot: 4.8, character: 6.8 };
-        const GIRL_FOLLOW_DIST = 3.0;   // distancia detrás del robot (punto de formación)
-        const GIRL_SIDE_DIST = 3.0;     // desplazamiento lateral (ni pegada ni lejos, pero sin tapar la cámara)
+        const GIRL_FOLLOW_DIST = 8.0;   // distancia detrás del robot (punto de formación)
+        const GIRL_SIDE_DIST = 4.5;     // desplazamiento lateral (sin tapar la cámara)
         const GIRL_CATCH_DIST = 3.2;    // a esta distancia te golpea (cuando te persigue)
         const GIRL_RADIUS = 1.2;        // radio de colisión de la chica contra los muros
         const GIRL_ESCAPE_DIST = 55;    // al matarte aparece a esta distancia (es más rápida que tú)
@@ -1253,9 +1253,16 @@
         const MITA_SRC_H = 68.46, MITA_SRC_MIN_Y = 0.0;
         const FOXY_GAME_H = 8.0;        // altura de Foxy en unidades del juego
         const MITA_GAME_H = 5.6;        // altura de Mita (la chica mide 6.8)
-        const MITA_FOLLOW_DIST = 2.8;   // va un poco más cerca que la chica...
-        const MITA_SIDE_DIST = -3.4;    // ...y por el lado contrario (no se pisan)
+        const MITA_FOLLOW_DIST = 7.0;   // va un poco más cerca que la chica...
+        const MITA_SIDE_DIST = -4.5;    // ...y por el lado contrario (no se pisan)
         const MITA_RADIUS = 1.1;        // radio de colisión de Mita contra los muros
+        const MITA_CATCH_DIST = 3.0;    // a esta distancia te golpea (si está hostil)
+
+        // VENTANA DE ESCAPE: un ataque resta 30s, pero el reloj NUNCA baja de
+        // este mínimo. Así, caer en manos de un perseguidor ya no te manda
+        // directo al lobby (bug: -30s podían dejar el contador a 0 y el
+        // siguiente tick disparaba el game over).
+        const ESCAPE_MIN_TIME = 45;
 
         let robotModel = null, girlModel = null, foxyModel = null, mitaModel = null;
         let robotMixer = null, girlMixer = null;
@@ -1264,7 +1271,53 @@
         let robotEmote = null;          // { name, until }  (emotes / muerte del robot)
         let girlOverride = null;        // { name, until }  (golpe de la chica)
         let girlAttacking = false;
+        let mitaAttacking = false;      // evita que Mita lance varios golpes a la vez
         let modelsReady = false;
+
+        // ==================== ACTORES CON ESQUELETO (FOXY / MITA) ====================
+        // Foxy (Freddy y Bonnie del Nivel 2) y Mita se cargan ahora CON esqueleto y
+        // animaciones. En lugar del balanceo artificial de antes, el clip se elige
+        // según la velocidad REAL del actor (medida por su desplazamiento por frame):
+        // parado -> idle, andando -> walk, rápido -> run. El mezclador se actualiza
+        // en el bucle principal, igual que el del robot y el de la chica.
+        const skinnedActors = [];
+        function registerSkinned(ent, gltf, targetH, srcH, srcMinY, clips) {
+            const root = gltf.scene;
+            const s = targetH / Math.max(0.0001, srcH);
+            root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+            root.scale.setScalar(s);
+            root.position.y = -srcMinY * s;      // los pies quedan en y = 0
+            if (ent) ent.add(root);
+            const mixer = new THREE.AnimationMixer(root);
+            const actions = buildActionMap(gltf);
+            const actor = {
+                ent, root, mixer, actions, state: null, prev: null,
+                idle: clips.idle, walk: clips.walk, run: clips.run,
+                walkSpeed: clips.walkSpeed == null ? 1.0 : clips.walkSpeed,
+                runSpeed: clips.runSpeed == null ? 9.0 : clips.runSpeed,
+                walkTimeScale: clips.walkTimeScale || 1, runTimeScale: clips.runTimeScale || 1,
+            };
+            if (actions[actor.idle]) actor.state = setClip(mixer, actions, null, actor.idle, { fade: 0 });
+            skinnedActors.push(actor);
+            return actor;
+        }
+        function updateSkinnedActors(delta) {
+            for (const a of skinnedActors) {
+                if (a.ent) {
+                    const p = a.ent.position;
+                    const speed = a.prev ? Math.hypot(p.x - a.prev.x, p.z - a.prev.z) / Math.max(delta, 1e-4) : 0;
+                    if (a.prev) a.prev.set(p.x, 0, p.z); else a.prev = new THREE.Vector3(p.x, 0, p.z);
+                    let want = a.idle, ts = 1;
+                    if (speed > a.walkSpeed) {
+                        const fast = speed > a.runSpeed;
+                        want = fast ? a.run : a.walk;
+                        ts = fast ? a.runTimeScale : a.walkTimeScale;
+                    }
+                    if (a.actions[want]) a.state = setClip(a.mixer, a.actions, a.state, want, { timeScale: ts });
+                }
+                a.mixer.update(delta);
+            }
+        }
 
         // ==================== CALIDAD ADAPTATIVA (RENDIMIENTO) ====================
         // Deja que el juego corra en equipos muy modestos ("patatas"): detecta la
@@ -1455,7 +1508,11 @@
             };
             load('robot', attachRobotModel);
             load('character', attachGirlModel);
-            load('foxy', attachFoxyModel);   // animatrónico del Nivel 2
+            // Foxy (animatrónico del Nivel 2) se necesita DOS veces: cada copia
+            // carga su propio esqueleto para poder animarla de forma independiente.
+            [freddyEntity, bonnieEntity].forEach((ent) => {
+                if (ent) load('foxy', (gltf) => attachFoxyTo(ent, gltf));
+            });
             load('mita', attachMitaModel);   // segunda seguidora
         }
 
@@ -1489,49 +1546,38 @@
             girlModel = root;
             girlMixer = new THREE.AnimationMixer(root);
             girlActions = buildActionMap(gltf);
-            girlState = setClip(girlMixer, girlActions, null, 'Idle', { fade: 0 });
+            girlState = setClip(girlMixer, girlActions, null, 'Phone', { fade: 0 });
             monaChinaEntity.visible = true;
             monaChinaEntity.position.set(playerGroup.position.x + GIRL_SIDE_DIST, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
             console.log('Chica cargada: ' + gltf.animations.length + ' animaciones (' + Object.keys(girlActions).join(', ') + ')');
         }
 
-        // Prepara un modelo ESTÁTICO (sin esqueleto): lo escala a `targetH` y
-        // deja sus pies en y=0. La altura y el mínimo Y reales del .glb se pasan
-        // a mano (srcH/srcMinY) para no depender de la cuantización.
-        function prepareStaticModel(gltf, targetH, srcH, srcMinY) {
-            const root = gltf.scene;
-            root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
-            const s = targetH / Math.max(0.0001, srcH);
-            root.scale.setScalar(s);
-            root.position.y = -srcMinY * s;
-            return root;
-        }
-
         // Animatrónicos del Nivel 2: sustituye las figuras procedurales de
-        // Freddy/Bonnie por el modelo glTF de FOXY. Se conservan los grupos
-        // `freddyEntity`/`bonnieEntity` como contenedores: la persecución, la
-        // colocación y la brújula no cambian. El clon comparte geometría y
-        // texturas (coste de memoria de un solo modelo).
-        function attachFoxyModel(gltf) {
-            foxyModel = prepareStaticModel(gltf, FOXY_GAME_H, FOXY_SRC_H, FOXY_SRC_MIN_Y);
-            [freddyEntity, bonnieEntity].forEach(ent => {
-                if (!ent) return;
-                ent.children.forEach(c => { if (c.isMesh) c.visible = false; }); // oculta lo procedural
-                ent.add(foxyModel.clone(true));
+        // Freddy/Bonnie por el modelo ANIMADO de FOXY. Cada instancia carga su
+        // propio esqueleto (son dos) para animarlas por separado; el clon con
+        // SkeletonUtils no existe en three r128 sin módulos extra.
+        function attachFoxyTo(ent, gltf) {
+            if (!ent) return;
+            ent.children.forEach(c => { if (c.isMesh) c.visible = false; }); // oculta lo procedural
+            registerSkinned(ent, gltf, FOXY_GAME_H, FOXY_SRC_H, FOXY_SRC_MIN_Y, {
+                idle: 'Walk', walk: 'Walk', run: 'Run',
+                walkSpeed: 0.6, runSpeed: 9.0, walkTimeScale: 1.25, runTimeScale: 1.35
             });
-            console.log('Foxy cargado para el Nivel 2 (' + FOXY_GAME_H + ' uds de alto).');
+            console.log('Foxy animado (' + gltf.animations.length + ' clips) anadido (' + FOXY_GAME_H + ' uds de alto).');
         }
 
-        // Segunda seguidora: MITA. Mismo patrón que la chica (modelo glTF si está
-        // disponible; si no, se queda la figura procedural).
+        // Segunda seguidora: MITA, ahora con esqueleto y animaciones (antes era un
+        // modelo estatico con balanceo artificial).
         function attachMitaModel(gltf) {
-            mitaModel = prepareStaticModel(gltf, MITA_GAME_H, MITA_SRC_H, MITA_SRC_MIN_Y);
-            if (mitaEntity) {
-                mitaEntity.children.forEach(c => { if (c.isMesh) c.visible = false; });
-                mitaEntity.add(mitaModel);
-                mitaEntity.visible = true;
-            }
-            console.log('Mita cargada (' + MITA_GAME_H + ' uds de alto).');
+            if (!mitaEntity) return;
+            mitaEntity.children.forEach(c => { if (c.isMesh) c.visible = false; });
+            if (mitaEntity.userData.stasis) mitaEntity.userData.stasis.visible = true; // el anillo de EMP sí se queda
+            mitaModel = registerSkinned(mitaEntity, gltf, MITA_GAME_H, MITA_SRC_H, MITA_SRC_MIN_Y, {
+                idle: 'Phone', walk: 'Walk', run: 'Run',
+                walkSpeed: 0.6, runSpeed: 20.0, walkTimeScale: 1.15, runTimeScale: 1.35
+            }).root;
+            mitaEntity.visible = true;
+            console.log('Mita animada (' + gltf.animations.length + ' clips) cargada (' + MITA_GAME_H + ' uds de alto).');
         }
 
         // Emotes del robot (botones del HUD): CAMINAR / CORRER / MORIR
@@ -1567,18 +1613,31 @@
             return LevelManager.checkCollision(x, z, GIRL_RADIUS);
         }
 
-        // Desplaza a la chica resolviendo cada eje por separado, para que se
-        // deslice a lo largo de los muros en lugar de atravesarlos.
-        function moveGirl(girl, stepX, stepZ) {
-            if (!girlCollides(girl.position.x + stepX, girl.position.z)) girl.position.x += stepX;
-            if (!girlCollides(girl.position.x, girl.position.z + stepZ)) girl.position.z += stepZ;
-        }
-
         // Coloca a la chica junto al robot (a distancia media). Si el punto de
         // formación cae dentro de un muro, prueba varios ángulos hasta hallar un
         // hueco libre. Se usa al empezar/reiniciar un nodo.
-        function placeGirlNearPlayer() {
+        function placeGirlNearPlayer(far = false) {
             const girl = monaChinaEntity;
+            // Al ENTRAR EN EL NIVEL (far=true) aparece más lejos (~16-30 uds) y
+            // luego camina hasta su formación cuando te mueves; antes se
+            // materializaba pegada al robot.
+            if (far) {
+                const px = playerGroup.position.x, pz = playerGroup.position.z;
+                // Se queda en el primer punto desde el que se puede CAMINAR
+                // hacia el robot (la malla gruesa de navegación a veces marca
+                // libre una zona con un muro FINO del modelo en medio y se
+                // quedaría clavada sin poder alcanzar la formación).
+                for (const rg of [[16, 22], [22, 30], [10, 16]]) {
+                    const s = LevelManager.findFreeSpot(px, pz, rg[0], rg[1], GIRL_RADIUS, 1.7, false);
+                    const c = LevelManager.findConnectedSpot(s.x, s.z, px, pz, GIRL_RADIUS) || s;
+                    girl.position.set(c.x, 0, c.z);
+                    for (let i = 0; i < 6; i++) LevelManager.moveAgentToward(girl, px, pz, 0.4, GIRL_RADIUS);
+                    const walked = Math.hypot(girl.position.x - c.x, girl.position.z - c.z);
+                    girl.position.set(c.x, 0, c.z);   // aparece AHÍ y camina en tiempo real
+                    if (walked > 0.6) return;
+                }
+                // Si nada lejano es caminable: formación normal (código de abajo).
+            }
             const pRot = playerGroup.rotation.y;
             const fx = Math.sin(pRot), fz = Math.cos(pRot);
             const rx = Math.cos(pRot), rz = -Math.sin(pRot);
@@ -1593,7 +1652,11 @@
                 const x = playerGroup.position.x + o.x, z = playerGroup.position.z + o.z;
                 if (!girlCollides(x, z)) { girl.position.set(x, 0, z); return; }
             }
-            girl.position.set(playerGroup.position.x, 0, playerGroup.position.z + GIRL_FOLLOW_DIST);
+            // Respaldo: punto libre cerca del robot (nunca dentro de un muro).
+            const s = LevelManager.findFreeSpot(
+                playerGroup.position.x, playerGroup.position.z,
+                GIRL_FOLLOW_DIST * 0.5, GIRL_FOLLOW_DIST * 3, GIRL_RADIUS, 0, false);
+            girl.position.set(s.x, 0, s.z);
         }
 
         // La chica: SEGUIDORA (imita tu marcha) o CAZADORA (si fallas la puerta)
@@ -1613,7 +1676,7 @@
             }
             if (isFrozen) {
                 if (girl.userData.stasis) girl.userData.stasis.material.opacity = 0.8;
-                if (!overridden) girlState = setClip(girlMixer, girlActions, girlState, 'Idle', { fade: 0.15 });
+                if (!overridden) girlState = setClip(girlMixer, girlActions, girlState, 'Phone', { fade: 0.15 });
                 return;
             }
             if (girl.userData.stasis) girl.userData.stasis.material.opacity = 0;
@@ -1628,9 +1691,11 @@
                 } else if (lvl && typeof lvl.updateEnemy === 'function') {
                     lvl.updateEnemy(girl, target, delta);                       // IA propia de cada nivel
                 } else {
-                    girl.lookAt(target.x, girl.position.y, target.z);
-                    const dir = new THREE.Vector3(); girl.getWorldDirection(dir);
-                    girl.position.addScaledVector(dir, (girl.userData.speed || 14) * delta);
+                    // Rodea muros con A* + steering (antes: línea recta y se
+                    // atascaba contra la pared hasta que tú te movías).
+                    LevelManager.moveAgentToward(
+                        girl, target.x, target.z,
+                        (girl.userData.speed || 14) * delta, GIRL_RADIUS);
                 }
                 // Evitar que la perseguidora atraviese muros: si quedó dentro de
                 // uno, se desliza por el eje libre o vuelve a su posición previa.
@@ -1641,16 +1706,28 @@
                 }
                 const moved = girl.position.distanceTo(before) > 0.01;
                 if (!overridden) {
-                    girlState = setClip(girlMixer, girlActions, girlState, moved ? 'Running' : 'Idle', { timeScale: 1.3 });
+                    girlState = setClip(girlMixer, girlActions, girlState, moved ? 'Run' : 'Phone', { timeScale: 1.3 });
                 }
                 if (d < 26 && d > GIRL_CATCH_DIST) AudioManager.play('heartbeat');
                 if (d < GIRL_CATCH_DIST) girlCatchesRobot();
             } else {
                 // SEGUIDORA: se queda quieta si tú estás quieto; camina si caminas; corre si corres
                 const spd = Math.hypot(playerVelocity.x, playerVelocity.z);
-                const moving = spd > 1.0;
+                const movingPlayer = spd > 1.0;
                 girl.lookAt(playerGroup.position.x, girl.position.y, playerGroup.position.z);
-                if (moving) {
+                // El señuelo activo la distrae: va a investigarlo (el ítem
+                // "ATRAYENDO AMENAZAS" afecta también a la seguidora).
+                const decoy = gameState.decoyPosition;
+                if (decoy) {
+                    const dxD = decoy.x - girl.position.x, dzD = decoy.z - girl.position.z;
+                    const ddD = Math.hypot(dxD, dzD);
+                    if (ddD > 0.6) {
+                        LevelManager.moveAgentToward(girl, decoy.x, decoy.z, Math.min(17, spd * 1.15 || 11) * delta, GIRL_RADIUS);
+                    }
+                    if (!overridden) {
+                        girlState = setClip(girlMixer, girlActions, girlState, 'Run', { timeScale: 1.3 });
+                    }
+                } else if (movingPlayer) {
                     // Punto de formación detrás y a un lado del robot (así no tapa la cámara)
                     const pRot = playerGroup.rotation.y;
                     const fx = Math.sin(pRot), fz = Math.cos(pRot);
@@ -1661,36 +1738,65 @@
                     const dd = Math.hypot(dx, dz);
                     if (dd > 0.4) {
                         const fspeed = Math.min(gameState.isSprinting ? 30 : 17, spd * 1.15);
-                        moveGirl(girl, (dx / dd) * fspeed * delta, (dz / dd) * fspeed * delta);
+                        // Rodea muros con A* (si no, se quedaba atorada en
+                        // las esquinas cuando doblabas).
+                        const gx = girl.position.x, gz = girl.position.z;
+                        LevelManager.moveAgentToward(girl, tx, tz, fspeed * delta, GIRL_RADIUS);
+                        // Anti-atasco: si la malla gruesa marcaba libre un
+                        // camino con un muro fino del modelo delante, da un
+                        // salto corto a un punto libre en vez de quedarse
+                        // clavada mirando la pared.
+                        if (Math.hypot(girl.position.x - gx, girl.position.z - gz) < 0.001) {
+                            girl.userData.stuckT = (girl.userData.stuckT || 0) + delta;
+                            if (girl.userData.stuckT > 0.5) {
+                                girl.userData.stuckT = 0;
+                                const hs = LevelManager.findFreeSpot(gx, gz, 2, 6, GIRL_RADIUS, time, false);
+                                girl.position.set(hs.x, 0, hs.z);
+                            }
+                        } else {
+                            girl.userData.stuckT = 0;
+                        }
+                        girl.lookAt(playerGroup.position.x, girl.position.y, playerGroup.position.z);
                     }
                     // ...pero su animación SIEMPRE imita la marcha del robot (caminar/correr)
                     if (!overridden) {
                         girlState = setClip(girlMixer, girlActions, girlState,
-                            gameState.isSprinting ? 'Running' : 'Walking',
+                            gameState.isSprinting ? 'Run' : 'Walk',
                             { timeScale: gameState.isSprinting ? 1.3 : 1.15 });
                     }
                 } else {
-                    if (!overridden) girlState = setClip(girlMixer, girlActions, girlState, 'Idle', { fade: 0.2 });
+                    if (!overridden) girlState = setClip(girlMixer, girlActions, girlState, 'Phone', { fade: 0.2 });
                 }
             }
         }
 
         // ---------------- MITA: segunda seguidora ----------------
-        // (La chica puede volverse hostil si fallas una puerta; Mita SIEMPRE
-        // sigue al robot, en todos los niveles.)
+        // (La chica puede volverse hostil si fallas una puerta; Mita sigue al
+        // robot... pero TAMBIÉN se vuelve hostil si fallas una puerta, con su
+        // propia lógica de caza. El señuelo la distrae en cualquier modo.)
         function mitaCollides(x, z) {
             return LevelManager.checkCollision(x, z, MITA_RADIUS);
         }
 
-        function moveMita(ent, stepX, stepZ) {
-            if (!mitaCollides(ent.position.x + stepX, ent.position.z)) ent.position.x += stepX;
-            if (!mitaCollides(ent.position.x, ent.position.z + stepZ)) ent.position.z += stepZ;
-        }
-
         // Coloca a Mita junto al robot (al lado contrario que la chica).
-        function placeMitaNearPlayer() {
+        function placeMitaNearPlayer(far = false) {
             const ent = mitaEntity;
             if (!ent) return;
+            // Al ENTRAR EN EL NIVEL (far=true) aparece aún más lejos (~24-38 uds).
+            if (far) {
+                const px = playerGroup.position.x, pz = playerGroup.position.z;
+                // Mismo criterio que la chica: solo un punto lejano desde el
+                // que de verdad se pueda caminar hacia el robot.
+                for (const rg of [[24, 30], [30, 38], [16, 24]]) {
+                    const s = LevelManager.findFreeSpot(px, pz, rg[0], rg[1], MITA_RADIUS, 4.2, false);
+                    const c = LevelManager.findConnectedSpot(s.x, s.z, px, pz, MITA_RADIUS) || s;
+                    ent.position.set(c.x, 0, c.z);
+                    for (let i = 0; i < 6; i++) LevelManager.moveAgentToward(ent, px, pz, 0.4, MITA_RADIUS);
+                    const walked = Math.hypot(ent.position.x - c.x, ent.position.z - c.z);
+                    ent.position.set(c.x, 0, c.z);
+                    if (walked > 0.6) return;
+                }
+            }
             const pRot = playerGroup.rotation.y;
             const fx = Math.sin(pRot), fz = Math.cos(pRot);
             const rx = Math.cos(pRot), rz = -Math.sin(pRot);
@@ -1704,19 +1810,39 @@
                 const x = playerGroup.position.x + o.x, z = playerGroup.position.z + o.z;
                 if (!mitaCollides(x, z)) { ent.position.set(x, 0, z); return; }
             }
-            ent.position.set(playerGroup.position.x, 0, playerGroup.position.z + MITA_FOLLOW_DIST);
+            // Respaldo: punto libre cerca del robot (nunca dentro de un muro).
+            const s = LevelManager.findFreeSpot(
+                playerGroup.position.x, playerGroup.position.z,
+                MITA_FOLLOW_DIST * 0.5, MITA_FOLLOW_DIST * 3, MITA_RADIUS, 0, false);
+            ent.position.set(s.x, 0, s.z);
         }
 
-        // Mita sigue al robot imitando su marcha. Resuelve cada eje por separado
-        // para deslizarse por los muros (nunca los atraviesa).
+        // Mita sigue al robot imitando su marcha. Usa navegación A* + steering
+        // para rodear muros. Si estás en PERSECUCIÓN se vuelve hostil: caza al
+        // robot (o al señuelo si lo hay) como la chica.
         function updateMita(delta) {
             const ent = mitaEntity;
             if (!ent || !ent.visible) return;
-            if (Date.now() < gameState.enemyFrozenUntil) return;
 
-            const time = clock.getElapsedTime();
+            // EMP/Flash: congelada con anillo de estasis visible (feedback).
+            const frozen = Date.now() < gameState.enemyFrozenUntil;
+            if (ent.userData.stasis) ent.userData.stasis.material.opacity = frozen ? 0.8 : 0;
+            if (frozen) return;
+
             const dx0 = playerGroup.position.x - ent.position.x;
             const dz0 = playerGroup.position.z - ent.position.z;
+            const d = Math.hypot(dx0, dz0);
+
+            if (gameState.isChased) {
+                // HOSTIL: caza al robot; el señuelo la distrae (como a la chica)
+                const target = gameState.decoyPosition ? gameState.decoyPosition : playerGroup.position;
+                LevelManager.moveAgentToward(ent, target.x, target.z, (ent.userData.speed || 14) * delta, MITA_RADIUS);
+                if (d < 26 && d > MITA_CATCH_DIST) AudioManager.play('heartbeat');
+                if (d < MITA_CATCH_DIST) mitaCatchesRobot();
+                return;
+            }
+
+            // SEGUIDORA: mira al robot siempre...
             if (dx0 * dx0 + dz0 * dz0 > 0.0025) {
                 ent.rotation.y = Math.atan2(dx0, dz0);   // mira al robot
             }
@@ -1724,22 +1850,55 @@
             const pRot = playerGroup.rotation.y;
             const fx = Math.sin(pRot), fz = Math.cos(pRot);
             const rx = Math.cos(pRot), rz = -Math.sin(pRot);
-            const tx = playerGroup.position.x - fx * MITA_FOLLOW_DIST + rx * MITA_SIDE_DIST;
-            const tz = playerGroup.position.z - fz * MITA_FOLLOW_DIST + rz * MITA_SIDE_DIST;
+            // El señuelo la distrae aunque NO estés en persecución: va a
+            // investigarlo (así el ítem afecta a Mita, como a la chica).
+            const decoy = gameState.decoyPosition;
+            const tx = decoy ? decoy.x : playerGroup.position.x - fx * MITA_FOLLOW_DIST + rx * MITA_SIDE_DIST;
+            const tz = decoy ? decoy.z : playerGroup.position.z - fz * MITA_FOLLOW_DIST + rz * MITA_SIDE_DIST;
             const dx = tx - ent.position.x, dz = tz - ent.position.z;
             const dd = Math.hypot(dx, dz);
-            // Se mueve si el robot camina (imita su marcha) o si se ha quedado
-            // atrás de más (no se pierde entre las salas del mapa).
+            // Se mueve si el robot camina (imita su marcha), si se ha quedado
+            // atrás de más (no se pierde entre las salas del mapa) o si hay
+            // un señuelo activo que investigar.
             const spd = Math.hypot(playerVelocity.x, playerVelocity.z);
             const far = Math.hypot(playerGroup.position.x - ent.position.x, playerGroup.position.z - ent.position.z);
-            const moving = dd > 0.6 && (spd > 1.0 || far > 18);
+            const moving = dd > 0.6 && (spd > 1.0 || far > 18 || !!decoy);
             if (moving) {
                 const fspeed = Math.min(gameState.isSprinting ? 30 : 18, Math.max(spd * 1.15, 11));
-                const step = Math.min(dd, fspeed * delta);
-                moveMita(ent, (dx / dd) * step, (dz / dd) * step);
+                // Rodea muros con A* (si no, se atoraba en las esquinas).
+                const ex = ent.position.x, ez = ent.position.z;
+                LevelManager.moveAgentToward(ent, tx, tz, Math.min(dd, fspeed * delta), MITA_RADIUS);
+                // Anti-atasco: muro fino delante y malla gruesa marcándolo
+                // libre -> salto corto a un punto libre cerca.
+                if (Math.hypot(ent.position.x - ex, ent.position.z - ez) < 0.001) {
+                    ent.userData.stuckT = (ent.userData.stuckT || 0) + delta;
+                    if (ent.userData.stuckT > 0.5) {
+                        ent.userData.stuckT = 0;
+                        const hs = LevelManager.findFreeSpot(ex, ez, 2, 6, MITA_RADIUS, clock.getElapsedTime(), false);
+                        ent.position.set(hs.x, 0, hs.z);
+                    }
+                } else {
+                    ent.userData.stuckT = 0;
+                }
             }
-            // El modelo es estático: un leve balanceo da sensación de marcha.
-            if (mitaModel) mitaModel.rotation.z = Math.sin(time * 6.0) * 0.035 * (moving ? 1 : 0.3);
+            // (antes: balanceo artificial del modelo estatico; ahora lo anima el mezclador)
+        }
+
+        // Mita alcanza al robot (solo si está hostil): golpe + muerte -> modal
+        function mitaCatchesRobot() {
+            if (mitaAttacking || !gameState.isPlaying || gameState.isPaused) return;
+            mitaAttacking = true;
+            AudioManager.play('alarm');
+            // Con escudo activo el robot NO muere (onPlayerAttacked lo absorbe)
+            if (!gameState.activeCooldowns.shield) {
+                const death = robotActions['Death'];
+                if (death) robotEmote = { name: 'Death', until: Date.now() + death.duration * 1000 + 1500 };
+            }
+            const delay = gameState.activeCooldowns.shield ? 500 : 850;
+            setTimeout(() => {
+                mitaAttacking = false;
+                if (gameState.isPlaying) onPlayerAttacked();
+            }, delay);
         }
 
         // La chica alcanza al robot: PUNCH de ella + DEATH del robot -> modal de reintento
@@ -1767,12 +1926,13 @@
             robotEmote = null;
             girlOverride = null;
             girlAttacking = false;
+            mitaAttacking = false;
 
             if (robotMixer && robotActions && robotActions['Idle']) {
                 robotState = setClip(robotMixer, robotActions, robotState, 'Idle', { fade: 0.2 });
             }
-            if (girlMixer && girlActions && girlActions['Idle']) {
-                girlState = setClip(girlMixer, girlActions, girlState, 'Idle', { fade: 0.2 });
+            if (girlMixer && girlActions && girlActions['Phone']) {
+                girlState = setClip(girlMixer, girlActions, girlState, 'Phone', { fade: 0.2 });
             }
         }
 
@@ -2005,7 +2165,7 @@
             stasis.position.y = 3.5;
             monaChinaEntity.add(stasis);
 
-            monaChinaEntity.userData = { tailL, tailR, stasis, hairMat, speed: 14.0 };
+            monaChinaEntity.userData = { tailL, tailR, stasis, hairMat, speed: 14.0, navRadius: GIRL_RADIUS };
             monaChinaEntity.visible = false;
             scene.add(monaChinaEntity);
         }
@@ -2059,6 +2219,16 @@
             mitaEntity.add(legL);
             mitaEntity.add(legR);
 
+            // Anillo de estasis: se ilumina con EMP/Flash para que se VEA que
+            // la habilidad también afecta a Mita (antes no había feedback).
+            const stasis = new THREE.Mesh(
+                new THREE.SphereGeometry(3.0, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0xff66cc, wireframe: true, transparent: true, opacity: 0 })
+            );
+            stasis.position.y = 3.2;
+            mitaEntity.add(stasis);
+
+            mitaEntity.userData = { stasis, speed: 14.0 };
             mitaEntity.visible = false;
             scene.add(mitaEntity);
         }
@@ -2094,7 +2264,7 @@
             freddyEntity.add(fEyeL);
             freddyEntity.add(fEyeR);
 
-            freddyEntity.userData = { jaw, speed: 15.0 };
+            freddyEntity.userData = { jaw, speed: 15.0, navRadius: 2.0 };
             freddyEntity.visible = false;
             scene.add(freddyEntity);
 
@@ -2128,7 +2298,7 @@
             bonnieEntity.add(bEyeL);
             bonnieEntity.add(bEyeR);
 
-            bonnieEntity.userData = { earL, earR, speed: 17.5 };
+            bonnieEntity.userData = { earL, earR, speed: 17.5, navRadius: 2.0 };
             bonnieEntity.visible = false;
             scene.add(bonnieEntity);
         }
@@ -2256,6 +2426,31 @@
 
             skyBeamTruth.visible = true;
             skyBeamHallucination.visible = true;
+        }
+
+        // Valida que las puertas visibles sean alcanzables desde la posición
+        // actual del jugador. Si alguna queda sellada (mapa-modelo con muros
+        // finos que la rejilla gruesa no preveía), la reubica en el punto
+        // libre CONECTADO más cercano. Se llama al montar el nodo y después
+        // de teletransportar una puerta al fallar.
+        function ensureDoorsReachable() {
+            if (!doorTruthGroup || !doorHallucinationGroup) return;
+            const px = playerGroup.position.x, pz = playerGroup.position.z;
+            const fix = (doorGroup) => {
+                if (!doorGroup.visible) return;
+                // Solo se reubica si la puerta queda INALCANZABLE o metida en
+                // un muro (el centro de la celda puede caer sobre un muro fino
+                // del modelo glTF).
+                if (!LevelManager.checkCollision(doorGroup.position.x, doorGroup.position.z, 1.4) &&
+                    LevelManager.isReachable(px, pz, doorGroup.position.x, doorGroup.position.z, 1.4)) return;
+                const spot = LevelManager.findConnectedSpot(
+                    doorGroup.position.x, doorGroup.position.z, px, pz, 1.4);
+                if (spot) doorGroup.position.set(spot.x, 0, spot.z);
+            };
+            fix(doorTruthGroup);
+            fix(doorHallucinationGroup);
+            skyBeamTruth.position.copy(doorTruthGroup.position).setY(130);
+            skyBeamHallucination.position.copy(doorHallucinationGroup.position).setY(130);
         }
 
         function useItem(type) {
@@ -2401,28 +2596,43 @@
 
             LevelManager.loadLevel(gameState.currentNodeIndex, scene, dirLight, ambientLight);
 
-            // Si el nivel define un punto de aparición propio (mapas desde
-            // modelo), el jugador arranca ahí en lugar del (0,0,0) genérico.
+            // Aparición SEGURA del jugador: si el nivel define un punto propio
+            // (mapas desde modelo) se valida contra la colisión; si cae dentro
+            // de un muro o en una zona sellada, se reubica en la zona navegable
+            // más grande. El radio 1.4 es el del jugador (1.3) con margen.
             const lvl = LevelManager.getCurrentLevel();
+            let spawn = { x: 0, z: 0 };
             if (lvl && typeof lvl.getSpawnPoint === 'function') {
                 const sp = lvl.getSpawnPoint();
-                if (sp) {
-                    playerGroup.position.set(sp.x, 0, sp.z);
-                    playerVelocity.set(0, 0, 0);
-                }
+                if (sp) spawn = { x: sp.x, z: sp.z };
             }
+            const safeSpawn = LevelManager.findSafeSpawn(spawn.x, spawn.z, 1.4);
+            playerGroup.position.set(safeSpawn.x, 0, safeSpawn.z);
+            playerVelocity.set(0, 0, 0);
 
             // NIVEL 2 (FNAF): los animatrónicos (Foxy) quedan PLANTADOS en el
             // mapa desde el principio, quietos, para que el jugador los
             // encuentre al explorar. Solo persiguen si falla la puerta.
+            // Se colocan en puntos libres CONECTADOS con la zona del jugador
+            // (antes podían quedar sellados tras un muro y nunca llegar).
             if (lvl && lvl.theme === "fnaf_pizzeria" && freddyEntity && bonnieEntity) {
                 const ax = playerGroup.position.x, az = playerGroup.position.z;
-                const f = LevelManager.findFreeSpot(ax, az, 45, 95, 2.5, 0, false);
-                const bn = LevelManager.findFreeSpot(ax, az, 45, 95, 2.5, Math.PI, false);
+                const placeConnected = (phase) => {
+                    const s = LevelManager.findFreeSpot(ax, az, 45, 95, 2.0, phase, false);
+                    return LevelManager.findConnectedSpot(s.x, s.z, ax, az, 2.0) || s;
+                };
+                const f = placeConnected(0);
+                const bn = placeConnected(Math.PI);
                 freddyEntity.position.set(f.x, 0, f.z);
                 bonnieEntity.position.set(bn.x, 0, bn.z);
                 freddyEntity.visible = true;
                 bonnieEntity.visible = true;
+                // Base de su PATRULLA (level2._patrolAnimatronic): al reentrar
+                // en el nivel vuelven a deambular alrededor de su nuevo puesto.
+                freddyEntity.userData.home = { x: f.x, z: f.z };
+                bonnieEntity.userData.home = { x: bn.x, z: bn.z };
+                freddyEntity.userData.patrolTarget = null;
+                bonnieEntity.userData.patrolTarget = null;
             }
 
             doorTruthGroup.visible = true;
@@ -2437,16 +2647,25 @@
             document.getElementById('player-status-badge').className = "text-emerald-400 font-bold";
 
             positionDoorsForNode();
-            LevelManager.spawnCollectibles(scene, 22);
+
+            // PASADA DE SEGURIDAD DE PUERTAS: ninguna puerta puede quedar en
+            // una zona inalcanzable desde la aparición del jugador (bug Nivel 2:
+            // la puerta "verdad" quedaba sellada y el nivel era injugable).
+            ensureDoorsReachable();
+
+            // Los coleccionables se generan lejos del PUNTO DE APARICIÓN REAL
+            // (antes siempre respecto a (0,0), que en los mapas-modelo estaba
+            // dentro de un muro y dejaba shards inalcanzables).
+            LevelManager.spawnCollectibles(scene, 22, playerGroup.position.x, playerGroup.position.z);
             updateHUD();
 
             // La chica vuelve a su posición de seguimiento (distancia media) y
             // las animaciones se reinician. Si el mapa tiene colisión, se
             // recoloca junto al robot en un punto libre.
             if (girlModel && monaChinaEntity) {
-                placeGirlNearPlayer();
+                placeGirlNearPlayer(true);   // true: al entrar, aparece más lejos
             }
-            if (mitaEntity) placeMitaNearPlayer();
+            if (mitaEntity) placeMitaNearPlayer(true);
             resetCharacterAnimStates();
 
             // Panel de instrucciones temporal: se muestra unos segundos y se desvanece
@@ -2546,12 +2765,11 @@
                 showTutorialTemporarily(4000);
 
                 const survivingDoor = currentLevel.isTruth ? doorTruthGroup : doorHallucinationGroup;
-                const survivingBeam = currentLevel.isTruth ? skyBeamTruth : skyBeamHallucination;
 
                 if (currentLevel.theme === "backrooms") {
                     showHUDNotification("¡ALUCINACIÓN! LA PUERTA HUYE Y LA SEGUIDORA SE VUELVE HOSTIL...", true);
                     survivingDoor.position.set(currentLevel.doors.teleportTarget.x, 0, currentLevel.doors.teleportTarget.z);
-                    survivingBeam.position.copy(survivingDoor.position).setY(130);
+                    ensureDoorsReachable();   // la nueva posición debe ser alcanzable
 
                     monaChinaEntity.userData.hairMat.color.setHex(0xff2288);
                     monaChinaEntity.userData.speed = 14.0;
@@ -2561,12 +2779,20 @@
                     gameState.fnafModeActive = true;
                     AudioManager.play('fnaf_wake');
                     document.getElementById('blip-security').classList.remove('hidden');
-                    document.getElementById('btn-security-action').style.display = 'block';
+                    // El botón de la blindada NO aparece ya aquí: se muestra
+                    // solo junto a la Sala de Seguridad (ver updateEnemies).
 
                     showHUDNotification("¡ANIMATRÓNICOS ACTIVADOS! ¡CORRE A LA SALA DE SEGURIDAD!", true);
 
-                    const fSpot = LevelManager.findFreeSpot(playerGroup.position.x, playerGroup.position.z, 26, 50, 2.5, 0, false);
-                    const bSpot = LevelManager.findFreeSpot(playerGroup.position.x, playerGroup.position.z, 26, 50, 2.5, Math.PI, false);
+                    // Aparecen en puntos libres y CONECTADOS con la zona del
+                    // jugador (si no, podían quedar sellados y nunca llegar).
+                    const px = playerGroup.position.x, pz = playerGroup.position.z;
+                    const placeConnected = (phase) => {
+                        const s = LevelManager.findFreeSpot(px, pz, 26, 50, 2.0, phase, false);
+                        return LevelManager.findConnectedSpot(s.x, s.z, px, pz, 2.0) || s;
+                    };
+                    const fSpot = placeConnected(0);
+                    const bSpot = placeConnected(Math.PI);
                     freddyEntity.position.set(fSpot.x, 0, fSpot.z);
                     bonnieEntity.position.set(bSpot.x, 0, bSpot.z);
                     freddyEntity.visible = true;
@@ -2575,7 +2801,7 @@
                 } else if (currentLevel.theme === "blackbox") {
                     showHUDNotification("¡ERROR EN LA CAJA NEGRA! ENTIDAD SLENDERMAN ACECHA. ¡NO LE DES LA ESPALDA!", true);
                     survivingDoor.position.set(currentLevel.doors.teleportTarget.x, 0, currentLevel.doors.teleportTarget.z);
-                    survivingBeam.position.copy(survivingDoor.position).setY(130);
+                    ensureDoorsReachable();   // la nueva posición debe ser alcanzable
 
                     monaChinaEntity.userData.hairMat.color.setHex(0x9922ff);
                     monaChinaEntity.userData.speed = 22.0;
@@ -2584,7 +2810,7 @@
                 } else {
                     showHUDNotification("¡ALUCINACIÓN DETECTADA! EL DEFENSOR LATENTE TE PERSIGUE.", true);
                     survivingDoor.position.set(currentLevel.doors.teleportTarget.x, 0, currentLevel.doors.teleportTarget.z);
-                    survivingBeam.position.copy(survivingDoor.position).setY(130);
+                    ensureDoorsReachable();   // la nueva posición debe ser alcanzable
 
                     monaChinaEntity.userData.hairMat.color.setHex(0x00ffd5);
                     monaChinaEntity.userData.speed = 17.0;
@@ -2596,6 +2822,20 @@
         function triggerSecurityDoor() {
             if (!gameState.fnafModeActive || gameState.securityDoorClosed) return;
 
+            // SOLO desde la Sala de Seguridad (misma distancia que la tecla E):
+            // antes el BOTÓN servía desde cualquier punto del mapa y la
+            // blindada COMPLETABA el nivel, con lo que se "pasaba" el nodo
+            // fallando la puerta y haciendo clic.
+            const so = Level2_FNAF && Level2_FNAF.securityOffice;
+            if (!so || Math.hypot(playerGroup.position.x - so.x, playerGroup.position.z - so.z) > 24) {
+                showHUDNotification("ACÉRCATE A LA SALA DE SEGURIDAD PARA USAR LA BLINDADA", true);
+                return;
+            }
+            if (Date.now() < (gameState.securityDoorCooldownUntil || 0)) {
+                showHUDNotification("¡LA BLINDADA SE ESTÁ RECARGANDO!", true);
+                return;
+            }
+
             gameState.securityDoorClosed = true;
             const fnafLevel = Level2_FNAF;
             if (fnafLevel && fnafLevel.securityOffice.doorMesh) {
@@ -2604,34 +2844,22 @@
             AudioManager.play('door_slam');
             document.getElementById('btn-security-action').style.display = 'none';
 
-            showHUDNotification("¡PUERTA BLINDADA CERRADA! ¡ESTÁS A SALVO!");
+            showHUDNotification("¡PUERTA BLINDADA CERRADA! REFUGIO TEMPORAL (8 s)");
             document.getElementById('player-status-badge').innerText = "REFUGIADO EN SEGURIDAD";
             document.getElementById('player-status-badge').className = "text-yellow-400 font-bold";
 
+            // NO completa el nivel: es un refugio TEMPORAL. La única forma de
+            // pasar el nodo es cruzar la PUERTA CORRECTA. Tras 8 s la blindada
+            // se abre sola, los animatrónicos se relanzan y entra en
+            // recarga otros 8 s (evita encadenar refugios infinitos).
             setTimeout(() => {
-                AudioManager.play('correct');
-                gameState.isPaused = true;
-                gameState.isChased = false;
-                if (document.pointerLockElement) document.exitPointerLock();
-                document.getElementById('chase-overlay').classList.remove('chase-active');
-
-                gameState.inventory.decoy++;
-                document.getElementById('reward-item-name').innerText = "¡SEÑUELO HOLOGRÁFICO FAZBEAR!";
-                document.getElementById('reward-notification-box').classList.remove('hidden');
-                updateInventoryHUD();
-
-                const modal = document.getElementById('modal-feedback');
-                document.getElementById('feedback-badge').innerText = "REFUGIO Y SESGO AUDITADO";
-                document.getElementById('feedback-title').className = "text-2xl sm:text-4xl font-orbitron font-bold mb-3 tracking-wider text-cyan-400";
-                document.getElementById('feedback-title').innerText = "¡SUPERVIVENCIA EN FNAF LOGRADA!";
-                document.getElementById('feedback-explanation').innerHTML = Level2_FNAF.explanation;
-
-                const btnNext = document.getElementById('btn-next-node');
-                btnNext.innerText = "CONTINUAR AL SIGUIENTE NODO ->";
-                gameState.modalActionPending = 'next_node';
-
-                modal.classList.remove('hidden');
-            }, 2000);
+                gameState.securityDoorClosed = false;
+                gameState.securityDoorCooldownUntil = Date.now() + 8000;
+                AudioManager.play('door_slam');
+                showHUDNotification("¡LA BLINDADA SE ABRE! LOS ANIMATRÓNICOS SE RELANZAN...", true);
+                document.getElementById('player-status-badge').innerText = "EXPLORANDO";
+                document.getElementById('player-status-badge').className = "text-emerald-400 font-bold";
+            }, 8000);
         }
 
         function handleModalNext() {
@@ -2664,7 +2892,10 @@
             AudioManager.play('alarm');
             if (document.pointerLockElement) document.exitPointerLock();
 
-            gameState.timeLeft = Math.max(0, gameState.timeLeft - 30);
+            // VENTANA DE ESCAPE: el ataque resta 30s, pero el reloj nunca baja
+            // de ESCAPE_MIN_TIME. Así, un golpe ya no puede dejarte a 0s (que
+            // disparaba el game over y te devolvía al lobby sin margen).
+            gameState.timeLeft = Math.max(ESCAPE_MIN_TIME, gameState.timeLeft - 30);
             updateHUD();
 
             // Si es el Nivel 1, la Mona China dice "Six seven"
@@ -2684,35 +2915,29 @@
                 document.getElementById('feedback-title').innerText = "¡HAS SIDO ALCANZADO!";
             }
 
-            document.getElementById('feedback-explanation').innerHTML = "El perseguidor te alcanzó: <strong class='text-red-400'>la chica golpeó al robot (PUNCH → DEATH)</strong>.<br><br><strong class='text-red-400'>PENALIZACIÓN:</strong> -30 segundos de tiempo.<br>Usa tus armas de defensa (<kbd class='bg-black px-1 rounded'>E</kbd>, <kbd class='bg-black px-1 rounded'>Q</kbd>, <kbd class='bg-black px-1 rounded'>F</kbd>, <kbd class='bg-black px-1 rounded'>R</kbd>) y busca la puerta correcta.";
+            document.getElementById('feedback-explanation').innerHTML = "El perseguidor te alcanzó: <strong class='text-red-400'>te dio golpeado (PUNCH → DEATH)</strong>.<br><br><strong class='text-red-400'>PENALIZACIÓN:</strong> -30 segundos de tiempo, pero siempre te quedan <strong class='text-yellow-400'>al menos 45s</strong> para escapar (ventana de escape).<br>Usa tus armas de defensa (<kbd class='bg-black px-1 rounded'>E</kbd>, <kbd class='bg-black px-1 rounded'>Q</kbd>, <kbd class='bg-black px-1 rounded'>F</kbd>, <kbd class='bg-black px-1 rounded'>R</kbd>) y busca la puerta correcta.";
 
             document.getElementById('reward-notification-box').classList.add('hidden');
             const btnNext = document.getElementById('btn-next-node');
             btnNext.innerText = "REINTENTAR ESCAPE ->";
             gameState.modalActionPending = 'retry';
 
-            // Tiempo de gracia y distanciamiento de seguridad: la chica aparece
-            // lejos (es más rápida que el robot), pero SIEMPRE en un punto libre
-            // DENTRO del mapa. Antes se colocaba en (jugador + 55, +55), que en
-            // el reintento podía caer FUERA del escenario (bug).
-            gameState.enemyFrozenUntil = Date.now() + 4000;
+            // Tiempo de gracia y distanciamiento de seguridad: TODAS las
+            // amenazas se alejan (y quedan congeladas más tiempo) para darte
+            // una ventana de escape real. Se recolocan en puntos libres y
+            // CONECTADOS con tu zona (nunca dentro de un muro ni sellados).
+            gameState.enemyFrozenUntil = Date.now() + 6500;
             const ax = playerGroup.position.x, az = playerGroup.position.z;
-            if (monaChinaEntity && monaChinaEntity.visible) {
-                const g = LevelManager.findFreeSpot(ax, az, GIRL_ESCAPE_DIST * 0.6, GIRL_ESCAPE_DIST, GIRL_RADIUS, 0, false);
-                monaChinaEntity.position.set(g.x, 0, g.z);
-            }
-            if (freddyEntity && freddyEntity.visible) {
-                const f = LevelManager.findFreeSpot(ax, az, 26, 50, 2.5, 0, false);
-                freddyEntity.position.set(f.x, 0, f.z);
-            }
-            if (bonnieEntity && bonnieEntity.visible) {
-                const bn = LevelManager.findFreeSpot(ax, az, 26, 50, 2.5, Math.PI, false);
-                bonnieEntity.position.set(bn.x, 0, bn.z);
-            }
-            if (mitaEntity && mitaEntity.visible) {
-                const m = LevelManager.findFreeSpot(ax, az, 8, 18, MITA_RADIUS, Math.PI * 0.5, false);
-                mitaEntity.position.set(m.x, 0, m.z);
-            }
+            const relocate = (ent, minD, maxD, radius, phase) => {
+                if (!ent || !ent.visible) return;
+                const s = LevelManager.findFreeSpot(ax, az, minD, maxD, radius, phase, false);
+                const c = LevelManager.findConnectedSpot(s.x, s.z, ax, az, radius) || s;
+                ent.position.set(c.x, 0, c.z);
+            };
+            relocate(monaChinaEntity, GIRL_ESCAPE_DIST * 0.7, GIRL_ESCAPE_DIST, GIRL_RADIUS, 0);
+            relocate(freddyEntity, 34, 62, 2.0, 0);
+            relocate(bonnieEntity, 34, 62, 2.0, Math.PI);
+            relocate(mitaEntity, 16, 30, MITA_RADIUS, Math.PI * 0.5);
 
             // El robot reaparece en un punto libre cercano (antes (0,0,z+15), que
             // podía quedar dentro de un muro al reintentar).
@@ -3204,6 +3429,7 @@
                 // Avanza las animaciones de los modelos GLB (robot y chica)
                 if (robotMixer) robotMixer.update(delta);
                 if (girlMixer) girlMixer.update(delta);
+            updateSkinnedActors(delta);
             }
 
             RTXPostprocessing.render(renderer, scene, camera);
@@ -3407,21 +3633,36 @@
             updateGirl(delta);
             updateMita(delta);
 
-            if (!gameState.isChased) return;
-
-            const isFrozen = Date.now() < gameState.enemyFrozenUntil;
-            const targetPos = gameState.decoyPosition ? gameState.decoyPosition : playerGroup.position;
             const currentLevel = LevelManager.getCurrentLevel();
-            const time = clock.getElapsedTime();
 
-            // Nivel 2: Animatrónicos FNAF (la chica se gestiona en updateGirl)
-            if (currentLevel.id === 2 && gameState.fnafModeActive) {
+            // Nivel 2: los animatrónicos FNAF se actualizan SIEMPRE (antes solo
+            // corrían con isChased+fnafModeActive). Mientras exploras PATRULLAN
+            // despacio cerca de su puesto; solo persiguen tras fallar la puerta.
+            // Su clíp idle es 'Walk' (no tienen 'Idle'), de ahí que, plantados,
+            // pareciera que "caminaban en el mismo sitio".
+            if (currentLevel && currentLevel.id === 2 && freddyEntity && bonnieEntity &&
+                typeof currentLevel.updateAnimatronics === 'function') {
+                // Botón de la blindada: SOLO aparece junto a la Sala de
+                // Seguridad y con la recarga lista (antes salía en todo el
+                // mapa al fallar la puerta y el clic la completaba el nivel).
+                const so0 = currentLevel.securityOffice;
+                const nearOffice = so0 && Math.hypot(
+                    playerGroup.position.x - so0.x, playerGroup.position.z - so0.z) < 24;
+                document.getElementById('btn-security-action').style.display =
+                    (gameState.fnafModeActive && !gameState.securityDoorClosed &&
+                        nearOffice && Date.now() >= (gameState.securityDoorCooldownUntil || 0))
+                        ? 'block' : 'none';
+
+                const isFrozen = Date.now() < gameState.enemyFrozenUntil;
                 if (!isFrozen && !gameState.securityDoorClosed) {
-                    currentLevel.updateAnimatronics(freddyEntity, bonnieEntity, targetPos, delta, time);
-                    const distF = freddyEntity.position.distanceTo(playerGroup.position);
-                    const distB = bonnieEntity.position.distanceTo(playerGroup.position);
-                    if (distF < 25 || distB < 25) AudioManager.play('heartbeat');
-                    if (distF < 4.5 || distB < 4.5) onPlayerAttacked();
+                    const targetPos = gameState.decoyPosition ? gameState.decoyPosition : playerGroup.position;
+                    currentLevel.updateAnimatronics(freddyEntity, bonnieEntity, targetPos, delta, clock.getElapsedTime());
+                    if (gameState.fnafModeActive) {
+                        const distF = freddyEntity.position.distanceTo(playerGroup.position);
+                        const distB = bonnieEntity.position.distanceTo(playerGroup.position);
+                        if (distF < 25 || distB < 25) AudioManager.play('heartbeat');
+                        if (distF < 4.5 || distB < 4.5) onPlayerAttacked();
+                    }
                 }
             }
         }
