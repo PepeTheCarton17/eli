@@ -368,17 +368,17 @@ window.Level2_FNAF = {
     _patrolAnimatronic(ent, delta, time, phase) {
         const home = ent.userData.home ||
             (ent.userData.home = { x: ent.position.x, z: ent.position.z });
-        const nav = ent.userData.navRadius || 2.0;
+        const nav = ent.userData.navRadius || 1.2;
         let tgt = ent.userData.patrolTarget;
-        if (!tgt || time > (ent.userData.patrolUntil || 0) ||
-            Math.hypot(ent.position.x - tgt.x, ent.position.z - tgt.z) < 2.5) {
-            const s = LevelManager.findFreeSpot(home.x, home.z, 5, 34, nav, time * 0.37 + phase, false);
+        const distToTgt = tgt ? Math.hypot(ent.position.x - tgt.x, ent.position.z - tgt.z) : 999;
+        if (!tgt || time > (ent.userData.patrolUntil || 0) || distToTgt < 2.0) {
+            const s = LevelManager.findFreeSpot(home.x, home.z, 6, 26, nav, time * 0.25 + phase, false);
             const c = LevelManager.findConnectedSpot(s.x, s.z, home.x, home.z, nav) ||
                 LevelManager.findConnectedSpot(s.x, s.z, ent.position.x, ent.position.z, nav) || s;
             ent.userData.patrolTarget = tgt = { x: c.x, z: c.z };
-            ent.userData.patrolUntil = time + 6 + Math.abs(Math.sin(time + phase)) * 3;
+            ent.userData.patrolUntil = time + 6 + (phase % 3);
         }
-        LevelManager.moveAgentToward(ent, tgt.x, tgt.z, 4.2 * delta, nav);
+        LevelManager.moveAgentToward(ent, tgt.x, tgt.z, 4.5 * delta, nav);
     },
 
     _chaseSinusoidal(entity, target, speed, delta, time, phase) {
@@ -386,7 +386,7 @@ window.Level2_FNAF = {
         // del steering A* (rodea muros de la pizzería) y el zig-zag se aplica
         // en perpendicular. Antes era línea recta pura y Foxy se atoraba
         // contra el primer muro sin poder alcanzarte nunca.
-        const base = LevelManager.steerTo(entity, target.x, target.z, entity.userData.navRadius || 2.0);
+        const base = LevelManager.steerTo(entity, target.x, target.z, entity.userData.navRadius || 1.2);
         if (!base.x && !base.z) return;
 
         const perpX = -base.z, perpZ = base.x;
@@ -399,6 +399,6 @@ window.Level2_FNAF = {
 
         entity.rotation.y = Math.atan2(mx, mz);  // mira hacia donde se mueve
         LevelManager.moveAgentBy(entity, mx * speed * delta, mz * speed * delta,
-            entity.userData.navRadius || 2.0);
+            entity.userData.navRadius || 1.2);
     }
 };

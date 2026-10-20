@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Inspector de rigs — Robots (Neon Oracle)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14161c; color: #dfe4ee;
+               font: 13px/1.4 system-ui, Segoe UI, sans-serif; overflow: hidden; }
+  #app { position: fixed; inset: 0; }
+  .panel { position: absolute; top: 10px; width: 260px; padding: 10px 12px;
+           background: #1c1f28ee; border: 1px solid #2e3342; border-radius: 10px; }
+  #pL { left: 10px; }  #pR { right: 10px; }
+  .ttl { font-weight: 700; letter-spacing: .3px; margin-bottom: 6px; }
+  .ttl small { color: #7f8aa3; font-weight: 400; }
+  select, button { width: 100%; margin: 3px 0; padding: 5px 6px; border-radius: 6px;
+                   background: #262b37; color: #e6eaf3; border: 1px solid #39404f; font-size: 12px; }
+  button:hover { background: #303747; cursor: pointer; }
+  .row { display: flex; gap: 6px; }
+  .note { margin-top: 6px; color: #8b95ab; font-size: 11px; }
+  #hint { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+          background: #1c1f28dd; border: 1px solid #2e3342; border-radius: 8px;
+          padding: 6px 12px; color: #96a0b6; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="panel" id="pL">
+  <div class="ttl">Panel Izquierdo <small>(Seguidor)</small></div>
+  <select id="modelL">
+    <option value="robot_leela.glb" selected>Leela (Seguidora / Mita)</option>
+    <option value="robot_george.glb">George</option>
+    <option value="robot_stan.glb">Stan</option>
+    <option value="robot_mike.glb">Mike</option>
+  </select>
+  <select id="clipL"></select>
+  <div class="row">
+    <button id="prevL">◀</button><button id="playL">Pausa</button><button id="nextL">▶</button>
+  </div>
+  <div class="note">alto juego 5.6 uds</div>
+</div>
+
+<div class="panel" id="pR">
+  <div class="ttl">Panel Derecho <small>(Animatrónicos)</small></div>
+  <select id="modelR">
+    <option value="robot_george.glb" selected>George (Freddy)</option>
+    <option value="robot_stan.glb">Stan (Bonnie)</option>
+    <option value="robot_mike.glb">Mike</option>
+    <option value="robot_leela.glb">Leela</option>
+  </select>
+  <select id="clipR"></select>
+  <div class="row">
+    <button id="prevR">◀</button><button id="playR">Pausa</button><button id="nextR">▶</button>
+  </div>
+  <div class="note">alto juego 8 uds</div>
+</div>
+
+<div id="hint">arrastra: girar · rueda: acercar · clic derecho: desplazar</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/meshoptimizer@0.20.0/meshopt_decoder.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const ROBOT_META = {
+  'robot_leela.glb':  { src: 5.22, minY: -0.02, game: 5.6 },
+  'robot_george.glb': { src: 6.46, minY: -0.02, game: 8.0 },
+  'robot_stan.glb':   { src: 6.41, minY:  0.01, game: 8.0 },
+  'robot_mike.glb':   { src: 5.29, minY:  0.01, game: 7.5 },
+  'mita.glb':         { src: 5.22, minY: -0.02, game: 5.6 },
+  'foxy.glb':         { src: 6.46, minY: -0.02, game: 8.0 }
+};
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161c);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 200);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.getElementById('app').appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xc9d6ff, 0x30323c, 1.15));
+const key = new THREE.DirectionalLight(0xffffff, 1.7); key.position.set(3, 6, 4); scene.add(key);
+const fill = new THREE.DirectionalLight(0x9fb6ff, 0.6); fill.position.set(-4, 2, -3); scene.add(fill);
+
+const grid = new THREE.GridHelper(30, 30, 0x3a4152, 0x272c37);
+grid.position.y = 0; scene.add(grid);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.target.set(0.6, 3.4, 0);
+camera.position.set(0.6, 4.8, 17);
+controls.update();
+
+const io = new THREE.GLTFLoader();
+if (window.MeshoptDecoder) io.setMeshoptDecoder(window.MeshoptDecoder);
+
+const models = { L: null, R: null };
+const SPEED = { L: 1, R: 1 };
+
+function loadSide(side, filename) {
+  const x = side === 'L' ? -3.6 : 4.0;
+  if (models[side] && models[side].root) {
+    scene.remove(models[side].root);
+    models[side] = null;
+  }
+  document.getElementById('hint').textContent = 'Cargando ' + filename + '...';
+  io.load('assets/models/' + filename, glb => {
+    setup(side, glb, x, filename);
+    document.getElementById('hint').textContent = 'Modelo cargado: ' + filename;
+  }, undefined, e => {
+    document.getElementById('hint').textContent = 'Error al cargar ' + filename + ': ' + e;
+  });
+}
+
+function setup(side, glb, x, filename) {
+  const root = glb.scene;
+  const clips = glb.animations || [];
+  const meta = ROBOT_META[filename] || { src: 6.0, minY: 0, game: 6.0 };
+  const s = meta.game / meta.src;
+  root.scale.setScalar(s);
+  root.position.set(x, -meta.minY * s, 0);
+  root.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.frustumCulled = false;
+      if (o.material && o.material.isMeshBasicMaterial && o.material.map) {
+        o.material = new THREE.MeshStandardMaterial({
+          map: o.material.map,
+          roughness: 0.85,
+          metalness: 0.1
+        });
+      }
+    }
+  });
+  scene.add(root);
+
+  const mixer = new THREE.AnimationMixer(root);
+  const sel = document.getElementById(side === 'L' ? 'clipL' : 'clipR');
+  sel.innerHTML = '';
+  clips.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.name;
+    o.textContent = c.name;
+    sel.appendChild(o);
+  });
+
+  const m = { root, mixer, clips, actions: {}, action: null, i: -1, playing: true };
+  clips.forEach(c => { m.actions[c.name] = mixer.clipAction(c); });
+  models[side] = m;
+
+  sel.onchange = () => play(side, sel.value);
+  document.getElementById(side === 'L' ? 'prevL' : 'prevR').onclick = () => step(side, -1);
+  document.getElementById(side === 'L' ? 'nextL' : 'nextR').onclick = () => step(side, +1);
+  document.getElementById(side === 'L' ? 'playL' : 'playR').onclick = (e) => {
+    m.playing = !m.playing; e.target.textContent = m.playing ? 'Pausa' : 'Seguir';
+  };
+
+  let first = 'Idle';
+  if (!m.actions[first]) first = clips[0] ? clips[0].name : '';
+  if (first) {
+    sel.value = first;
+    play(side, first);
+  }
+
+  document.querySelector(`#p${side} .note`).textContent =
+    `alto juego ${meta.game} uds (${meta.src} en GLB) · clips: ${clips.length}`;
+}
+
+function play(side, name) {
+  const m = models[side]; if (!m || !m.actions[name]) return;
+  const next = m.actions[name];
+  if (m.action === next) return;
+  next.reset().setEffectiveWeight(1).setLoop(THREE.LoopRepeat, Infinity);
+  next.timeScale = SPEED[side];
+  next.play();
+  if (m.action) next.crossFadeFrom(m.action, 0.25, false);
+  m.action = next;
+  m.pick = name;
+  m.i = m.clips.findIndex(c => c.name === name);
+  const sel = document.getElementById(side === 'L' ? 'clipL' : 'clipR');
+  if (sel.value !== name) sel.value = name;
+}
+
+function step(side, d) {
+  const m = models[side]; if (!m || !m.clips.length) return;
+  m.i = (m.i + d + m.clips.length) % m.clips.length;
+  const nm = m.clips[m.i].name;
+  const sel = document.getElementById(side === 'L' ? 'clipL' : 'clipR');
+  sel.value = nm;
+  play(side, nm);
+}
+
+document.getElementById('modelL').onchange = (e) => loadSide('L', e.target.value);
+document.getElementById('modelR').onchange = (e) => loadSide('R', e.target.value);
+
+loadSide('L', 'robot_leela.glb');
+loadSide('R', 'robot_george.glb');
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+const clock = new THREE.Clock();
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  for (const s of ['L', 'R']) {
+    const m = models[s]; if (!m) continue;
+    m.mixer.update(m.playing ? dt : 0);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

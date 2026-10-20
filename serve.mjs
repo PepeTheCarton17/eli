@@ -8,10 +8,12 @@
 // No requiere `npm install`: solo necesita tener Node.js instalado.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const basePort = Number(process.argv[2]) || 8123;
-const root = resolve(process.cwd());
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = __dirname;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript',

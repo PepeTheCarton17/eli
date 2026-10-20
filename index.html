@@ -1242,17 +1242,29 @@
         const GIRL_ESCAPE_DIST = 55;    // al matarte aparece a esta distancia (es más rápida que tú)
 
         // ==================== FOXY (ANIMATRÓNICO) Y MITA (2ª SEGUIDORA) ====================
-        // Los .glb son estáticos (sin esqueleto ni animaciones), así que se
-        // escalan por su altura real y se mueven rígidos. Foxy conserva los
-        // grupos freddyEntity/bonnieEntity, de modo que toda la IA de
-        // persecución FNAF sigue funcionando igual.
-        // Altura y "pies" REALES de cada .glb (medidos con gltf-transform). Se
-        // fijan a mano —igual que MODEL_SRC_H— porque las mallas vienen
+        // Ambos .glb vienen con esqueleto (25 huesos Mixamo) y 10 clips:
+        // Walk, WalkAlt, WalkStart, WalkStop, Run, Jump, Attack, Excited,
+        // Phone, SitYell. El rig es una pose de marcha (Foxy) / de pie (Mita)
+        // que se anima por deltas, así que las prendas no se descolocan.
+        // Foxy conserva los grupos freddyEntity/bonnieEntity, de modo que toda
+        // la IA de persecución FNAF sigue funcionando igual.
+        // Altura y "pies" REALES de cada .glb (bbox de la malla ya deformada).
+        // Se fijan a mano —igual que MODEL_SRC_H— porque las mallas vienen
         // cuantizadas (i16 normalizado) y Box3.setFromObject no es fiable.
-        const FOXY_SRC_H = 201.43, FOXY_SRC_MIN_Y = -6.70;
-        const MITA_SRC_H = 68.46, MITA_SRC_MIN_Y = 0.0;
-        const FOXY_GAME_H = 8.0;        // altura de Foxy en unidades del juego
-        const MITA_GAME_H = 5.6;        // altura de Mita (la chica mide 6.8)
+        // Modelos de "more robots" (Leela, George, Stan, Mike) convertidos a .glb
+        // con esqueleto y 19-20 animaciones completas (Idle, Walk, Run, Punch, Death, etc.).
+        // - Leela: sustituye al personaje seguidor "Mita" que acompaña al jugador en todos los niveles.
+        // - George y Stan: sustituyen a los animatrónicos Freddy y Bonnie del Nivel 2 (antes Foxy).
+        const ROBOT_MODELS_INFO = {
+            leela:  { srcH: 5.22, srcMinY: -0.02, gameH: 5.6 },
+            george: { srcH: 6.46, srcMinY: -0.02, gameH: 8.0 },
+            stan:   { srcH: 6.41, srcMinY:  0.01, gameH: 8.0 },
+            mike:   { srcH: 5.29, srcMinY:  0.01, gameH: 7.5 },
+        };
+        const FOXY_SRC_H = 6.46, FOXY_SRC_MIN_Y = -0.02;
+        const MITA_SRC_H = 5.22, MITA_SRC_MIN_Y = -0.02;
+        const FOXY_GAME_H = 8.0;        // altura de robots animatrónicos en Nivel 2 (Freddy / Bonnie)
+        const MITA_GAME_H = 5.6;        // altura del robot seguidor (reemplazo de Mita)
         const MITA_FOLLOW_DIST = 7.0;   // va un poco más cerca que la chica...
         const MITA_SIDE_DIST = -4.5;    // ...y por el lado contrario (no se pisan)
         const MITA_RADIUS = 1.1;        // radio de colisión de Mita contra los muros
@@ -1284,36 +1296,103 @@
         function registerSkinned(ent, gltf, targetH, srcH, srcMinY, clips) {
             const root = gltf.scene;
             const s = targetH / Math.max(0.0001, srcH);
-            root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+            root.traverse(o => {
+                if (o.isMesh) {
+                    o.castShadow = true;
+                    o.frustumCulled = false;
+                    if (o.material && o.material.isMeshBasicMaterial && o.material.map) {
+                        o.material = new THREE.MeshStandardMaterial({
+                            map: o.material.map,
+                            roughness: 0.85,
+                            metalness: 0.1
+                        });
+                    }
+                }
+            });
             root.scale.setScalar(s);
             root.position.y = -srcMinY * s;      // los pies quedan en y = 0
             if (ent) ent.add(root);
             const mixer = new THREE.AnimationMixer(root);
             const actions = buildActionMap(gltf);
             const actor = {
-                ent, root, mixer, actions, state: null, prev: null,
-                idle: clips.idle, walk: clips.walk, run: clips.run,
+                ent, root, mixer, actions, state: null, prev: null, override: null,
+                currentAnim: clips.idle || 'Idle',
+                smoothSpeed: 0,
+                timeInState: 0,
+                idle: clips.idle || 'Idle', walk: clips.walk || 'Walk', run: clips.run || 'Run',
                 walkSpeed: clips.walkSpeed == null ? 1.0 : clips.walkSpeed,
-                runSpeed: clips.runSpeed == null ? 9.0 : clips.runSpeed,
-                walkTimeScale: clips.walkTimeScale || 1, runTimeScale: clips.runTimeScale || 1,
+                runSpeed: clips.runSpeed == null ? 8.0 : clips.runSpeed,
+                walkTimeScale: clips.walkTimeScale || 1.15, runTimeScale: clips.runTimeScale || 1.35,
             };
             if (actions[actor.idle]) actor.state = setClip(mixer, actions, null, actor.idle, { fade: 0 });
             skinnedActors.push(actor);
             return actor;
         }
         function updateSkinnedActors(delta) {
+            const now = Date.now();
             for (const a of skinnedActors) {
-                if (a.ent) {
-                    const p = a.ent.position;
-                    const speed = a.prev ? Math.hypot(p.x - a.prev.x, p.z - a.prev.z) / Math.max(delta, 1e-4) : 0;
-                    if (a.prev) a.prev.set(p.x, 0, p.z); else a.prev = new THREE.Vector3(p.x, 0, p.z);
-                    let want = a.idle, ts = 1;
-                    if (speed > a.walkSpeed) {
-                        const fast = speed > a.runSpeed;
-                        want = fast ? a.run : a.walk;
-                        ts = fast ? a.runTimeScale : a.walkTimeScale;
+                if (!a.ent || !a.ent.visible) {
+                    a.mixer.update(delta);
+                    continue;
+                }
+                const p = a.ent.position;
+                const rawSpeed = a.prev ? Math.hypot(p.x - a.prev.x, p.z - a.prev.z) / Math.max(delta, 1e-4) : 0;
+                if (a.prev) a.prev.set(p.x, 0, p.z); else a.prev = new THREE.Vector3(p.x, 0, p.z);
+
+                // Suavizado exponencial para evitar saltos o sacudidas de animación por fluctuaciones de 1 frame
+                const alpha = Math.min(1.0, 7.0 * delta);
+                a.smoothSpeed = (a.smoothSpeed == null) ? rawSpeed : a.smoothSpeed + (rawSpeed - a.smoothSpeed) * alpha;
+                a.timeInState = (a.timeInState || 0) + delta;
+
+                let want = a.currentAnim || a.idle;
+                let ts = 1;
+
+                if (a.override && now < a.override.until) {
+                    want = a.override.name;
+                    ts = a.override.timeScale || 1;
+                } else {
+                    a.override = null;
+                    const spd = a.smoothSpeed;
+
+                    // Máquina de estados con histéresis estricta para evitar alternancias rápidas (jitter / saltitos)
+                    if (a.currentAnim === a.idle) {
+                        if (spd > 0.8) {
+                            want = spd > a.runSpeed ? a.run : a.walk;
+                        }
+                    } else if (a.currentAnim === a.walk) {
+                        if (spd < 0.25 && a.timeInState > 0.18) {
+                            want = a.idle;
+                        } else if (spd > a.runSpeed) {
+                            want = a.run;
+                        } else {
+                            want = a.walk;
+                        }
+                    } else if (a.currentAnim === a.run) {
+                        if (spd < 0.25 && a.timeInState > 0.18) {
+                            want = a.idle;
+                        } else if (spd < a.runSpeed - 1.5) {
+                            want = a.walk;
+                        } else {
+                            want = a.run;
+                        }
+                    } else {
+                        want = spd > 0.8 ? a.walk : a.idle;
                     }
-                    if (a.actions[want]) a.state = setClip(a.mixer, a.actions, a.state, want, { timeScale: ts });
+                    ts = (want === a.run) ? a.runTimeScale : (want === a.walk) ? a.walkTimeScale : 1;
+                }
+
+                if (want !== a.currentAnim) {
+                    a.currentAnim = want;
+                    a.timeInState = 0;
+                }
+
+                if (a.actions[want]) {
+                    a.state = setClip(a.mixer, a.actions, a.state, want, {
+                        timeScale: ts,
+                        fade: 0.22,
+                        clamp: want === 'Punch' || want === 'Death' || want === 'Kick' || want === 'SwordSlash',
+                        once: want === 'Punch' || want === 'Death' || want === 'Kick' || want === 'SwordSlash'
+                    });
                 }
                 a.mixer.update(delta);
             }
@@ -1442,15 +1521,22 @@
         function setClip(mixer, actions, state, name, opts = {}) {
             const clip = actions[name];
             if (!clip) return state;
-            if (state && state.name === name && (opts.once || (state.action && state.action.isRunning()))) return state;
+            if (state && state.name === name) {
+                if (state.action && opts.timeScale && Math.abs(state.action.timeScale - opts.timeScale) > 0.05) {
+                    state.action.setEffectiveTimeScale(opts.timeScale);
+                }
+                return state;
+            }
             const action = mixer.clipAction(clip);
-            action.reset();
             action.setLoop(opts.once ? THREE.LoopOnce : THREE.LoopRepeat, opts.once ? 1 : Infinity);
             action.clampWhenFinished = !!opts.clamp;
             action.setEffectiveTimeScale(opts.timeScale || 1);
             action.setEffectiveWeight(1);
             if (state && state.action && state.action !== action) {
+                action.reset();
                 action.crossFadeFrom(state.action, opts.fade == null ? 0.22 : opts.fade, false);
+            } else if (!action.isRunning()) {
+                action.reset();
             }
             action.play();
             return { name, action };
@@ -1508,12 +1594,15 @@
             };
             load('robot', attachRobotModel);
             load('character', attachGirlModel);
-            // Foxy (animatrónico del Nivel 2) se necesita DOS veces: cada copia
-            // carga su propio esqueleto para poder animarla de forma independiente.
-            [freddyEntity, bonnieEntity].forEach((ent) => {
-                if (ent) load('foxy', (gltf) => attachFoxyTo(ent, gltf));
-            });
-            load('mita', attachMitaModel);   // segunda seguidora
+            // Nivel 2: Asignamos distintos robots a Freddy (George) y Bonnie (Stan)
+            if (freddyEntity) {
+                load('robot_george', (gltf) => attachFoxyTo(freddyEntity, gltf, ROBOT_MODELS_INFO.george));
+            }
+            if (bonnieEntity) {
+                load('robot_stan', (gltf) => attachFoxyTo(bonnieEntity, gltf, ROBOT_MODELS_INFO.stan));
+            }
+            // Seguidor que acompaña al jugador en todos los niveles (robot Leela en sustitución de Mita)
+            load('robot_leela', attachMitaModel);
         }
 
         function attachRobotModel(gltf) {
@@ -1556,28 +1645,30 @@
         // Freddy/Bonnie por el modelo ANIMADO de FOXY. Cada instancia carga su
         // propio esqueleto (son dos) para animarlas por separado; el clon con
         // SkeletonUtils no existe en three r128 sin módulos extra.
-        function attachFoxyTo(ent, gltf) {
+        function attachFoxyTo(ent, gltf, info = ROBOT_MODELS_INFO.george) {
             if (!ent) return;
             ent.children.forEach(c => { if (c.isMesh) c.visible = false; }); // oculta lo procedural
-            registerSkinned(ent, gltf, FOXY_GAME_H, FOXY_SRC_H, FOXY_SRC_MIN_Y, {
-                idle: 'Walk', walk: 'Walk', run: 'Run',
-                walkSpeed: 0.6, runSpeed: 9.0, walkTimeScale: 1.25, runTimeScale: 1.35
+            const h = info && info.gameH ? info.gameH : FOXY_GAME_H;
+            const srcH = info && info.srcH ? info.srcH : FOXY_SRC_H;
+            const minY = info && info.srcMinY != null ? info.srcMinY : FOXY_SRC_MIN_Y;
+            registerSkinned(ent, gltf, h, srcH, minY, {
+                idle: 'Idle', walk: 'Walk', run: 'Run',
+                walkSpeed: 0.6, runSpeed: 8.0, walkTimeScale: 1.15, runTimeScale: 1.35
             });
-            console.log('Foxy animado (' + gltf.animations.length + ' clips) anadido (' + FOXY_GAME_H + ' uds de alto).');
+            console.log('Robot animatrónico animado (' + gltf.animations.length + ' clips) añadido (' + h + ' uds de alto).');
         }
 
-        // Segunda seguidora: MITA, ahora con esqueleto y animaciones (antes era un
-        // modelo estatico con balanceo artificial).
+        // Seguidor que acompaña al jugador (Leela, reemplazo de Mita), con esqueleto y animaciones de robot.
         function attachMitaModel(gltf) {
             if (!mitaEntity) return;
             mitaEntity.children.forEach(c => { if (c.isMesh) c.visible = false; });
             if (mitaEntity.userData.stasis) mitaEntity.userData.stasis.visible = true; // el anillo de EMP sí se queda
             mitaModel = registerSkinned(mitaEntity, gltf, MITA_GAME_H, MITA_SRC_H, MITA_SRC_MIN_Y, {
-                idle: 'Phone', walk: 'Walk', run: 'Run',
-                walkSpeed: 0.6, runSpeed: 20.0, walkTimeScale: 1.15, runTimeScale: 1.35
+                idle: 'Idle', walk: 'Walk', run: 'Run',
+                walkSpeed: 0.6, runSpeed: 10.0, walkTimeScale: 1.15, runTimeScale: 1.35
             }).root;
             mitaEntity.visible = true;
-            console.log('Mita animada (' + gltf.animations.length + ' clips) cargada (' + MITA_GAME_H + ' uds de alto).');
+            console.log('Robot seguidor animado (' + gltf.animations.length + ' clips) cargado (' + MITA_GAME_H + ' uds de alto).');
         }
 
         // Emotes del robot (botones del HUD): CAMINAR / CORRER / MORIR
@@ -1842,34 +1933,26 @@
                 return;
             }
 
-            // SEGUIDORA: mira al robot siempre...
-            if (dx0 * dx0 + dz0 * dz0 > 0.0025) {
-                ent.rotation.y = Math.atan2(dx0, dz0);   // mira al robot
-            }
-
+            // SEGUIDORA:
             const pRot = playerGroup.rotation.y;
             const fx = Math.sin(pRot), fz = Math.cos(pRot);
             const rx = Math.cos(pRot), rz = -Math.sin(pRot);
-            // El señuelo la distrae aunque NO estés en persecución: va a
-            // investigarlo (así el ítem afecta a Mita, como a la chica).
             const decoy = gameState.decoyPosition;
             const tx = decoy ? decoy.x : playerGroup.position.x - fx * MITA_FOLLOW_DIST + rx * MITA_SIDE_DIST;
             const tz = decoy ? decoy.z : playerGroup.position.z - fz * MITA_FOLLOW_DIST + rz * MITA_SIDE_DIST;
             const dx = tx - ent.position.x, dz = tz - ent.position.z;
             const dd = Math.hypot(dx, dz);
-            // Se mueve si el robot camina (imita su marcha), si se ha quedado
-            // atrás de más (no se pierde entre las salas del mapa) o si hay
-            // un señuelo activo que investigar.
             const spd = Math.hypot(playerVelocity.x, playerVelocity.z);
             const far = Math.hypot(playerGroup.position.x - ent.position.x, playerGroup.position.z - ent.position.z);
-            const moving = dd > 0.6 && (spd > 1.0 || far > 18 || !!decoy);
+
+            // Sigue suavemente al jugador sin paradas de 1 solo frame:
+            const wantsMove = spd > 1.0 || far > 16 || !!decoy;
+            const moving = wantsMove ? (dd > 0.45) : (dd > 1.3);
+
             if (moving) {
-                const fspeed = Math.min(gameState.isSprinting ? 30 : 18, Math.max(spd * 1.15, 11));
-                // Rodea muros con A* (si no, se atoraba en las esquinas).
+                const fspeed = Math.min(gameState.isSprinting ? 30 : 18, Math.max(spd * 1.15, 12));
                 const ex = ent.position.x, ez = ent.position.z;
                 LevelManager.moveAgentToward(ent, tx, tz, Math.min(dd, fspeed * delta), MITA_RADIUS);
-                // Anti-atasco: muro fino delante y malla gruesa marcándolo
-                // libre -> salto corto a un punto libre cerca.
                 if (Math.hypot(ent.position.x - ex, ent.position.z - ez) < 0.001) {
                     ent.userData.stuckT = (ent.userData.stuckT || 0) + delta;
                     if (ent.userData.stuckT > 0.5) {
@@ -1880,6 +1963,15 @@
                 } else {
                     ent.userData.stuckT = 0;
                 }
+            } else {
+                // Cuando está quieta cerca del jugador, rota suavemente a mirarlo (evita tirones angulares en diagonal)
+                if (dx0 * dx0 + dz0 * dz0 > 0.0025) {
+                    const targetYaw = Math.atan2(dx0, dz0);
+                    let diff = targetYaw - ent.rotation.y;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    ent.rotation.y += diff * Math.min(1.0, 6.0 * delta);
+                }
             }
             // (antes: balanceo artificial del modelo estatico; ahora lo anima el mezclador)
         }
@@ -1888,6 +1980,13 @@
         function mitaCatchesRobot() {
             if (mitaAttacking || !gameState.isPlaying || gameState.isPaused) return;
             mitaAttacking = true;
+            const mitaActor = skinnedActors.find(a => a.ent === mitaEntity);
+            if (mitaActor) {
+                const atk = mitaActor.actions['Punch'] ? 'Punch' : (mitaActor.actions['Kick'] ? 'Kick' : 'SwordSlash');
+                if (mitaActor.actions[atk]) {
+                    mitaActor.override = { name: atk, until: Date.now() + 900, timeScale: 1.25 };
+                }
+            }
             AudioManager.play('alarm');
             // Con escudo activo el robot NO muere (onPlayerAttacked lo absorbe)
             if (!gameState.activeCooldowns.shield) {
@@ -1927,6 +2026,12 @@
             girlOverride = null;
             girlAttacking = false;
             mitaAttacking = false;
+            for (const a of skinnedActors) {
+                a.override = null;
+                if (a.actions[a.idle]) {
+                    a.state = setClip(a.mixer, a.actions, a.state, a.idle, { fade: 0.2 });
+                }
+            }
 
             if (robotMixer && robotActions && robotActions['Idle']) {
                 robotState = setClip(robotMixer, robotActions, robotState, 'Idle', { fade: 0.2 });
@@ -2264,7 +2369,7 @@
             freddyEntity.add(fEyeL);
             freddyEntity.add(fEyeR);
 
-            freddyEntity.userData = { jaw, speed: 15.0, navRadius: 2.0 };
+            freddyEntity.userData = { jaw, speed: 15.0, navRadius: 1.2 };
             freddyEntity.visible = false;
             scene.add(freddyEntity);
 
@@ -2298,7 +2403,7 @@
             bonnieEntity.add(bEyeL);
             bonnieEntity.add(bEyeR);
 
-            bonnieEntity.userData = { earL, earR, speed: 17.5, navRadius: 2.0 };
+            bonnieEntity.userData = { earL, earR, speed: 17.5, navRadius: 1.2 };
             bonnieEntity.visible = false;
             scene.add(bonnieEntity);
         }
@@ -2618,8 +2723,8 @@
             if (lvl && lvl.theme === "fnaf_pizzeria" && freddyEntity && bonnieEntity) {
                 const ax = playerGroup.position.x, az = playerGroup.position.z;
                 const placeConnected = (phase) => {
-                    const s = LevelManager.findFreeSpot(ax, az, 45, 95, 2.0, phase, false);
-                    return LevelManager.findConnectedSpot(s.x, s.z, ax, az, 2.0) || s;
+                    const s = LevelManager.findFreeSpot(ax, az, 35, 75, 1.2, phase, false);
+                    return LevelManager.findConnectedSpot(s.x, s.z, ax, az, 1.2) || s;
                 };
                 const f = placeConnected(0);
                 const bn = placeConnected(Math.PI);
@@ -2935,8 +3040,8 @@
                 ent.position.set(c.x, 0, c.z);
             };
             relocate(monaChinaEntity, GIRL_ESCAPE_DIST * 0.7, GIRL_ESCAPE_DIST, GIRL_RADIUS, 0);
-            relocate(freddyEntity, 34, 62, 2.0, 0);
-            relocate(bonnieEntity, 34, 62, 2.0, Math.PI);
+            relocate(freddyEntity, 34, 62, 1.2, 0);
+            relocate(bonnieEntity, 34, 62, 1.2, Math.PI);
             relocate(mitaEntity, 16, 30, MITA_RADIUS, Math.PI * 0.5);
 
             // El robot reaparece en un punto libre cercano (antes (0,0,z+15), que
@@ -3661,7 +3766,17 @@
                         const distF = freddyEntity.position.distanceTo(playerGroup.position);
                         const distB = bonnieEntity.position.distanceTo(playerGroup.position);
                         if (distF < 25 || distB < 25) AudioManager.play('heartbeat');
-                        if (distF < 4.5 || distB < 4.5) onPlayerAttacked();
+                        if (distF < 4.5 || distB < 4.5) {
+                            const catchingEnt = distF < distB ? freddyEntity : bonnieEntity;
+                            const actor = skinnedActors.find(a => a.ent === catchingEnt);
+                            if (actor) {
+                                const atk = actor.actions['Punch'] ? 'Punch' : (actor.actions['Kick'] ? 'Kick' : 'SwordSlash');
+                                if (actor.actions[atk]) {
+                                    actor.override = { name: atk, until: Date.now() + 900, timeScale: 1.25 };
+                                } 
+                            }
+                            onPlayerAttacked();
+                        }
                     }
                 }
             }
